@@ -1054,11 +1054,14 @@ get_footer();
                                     <br>
                                     <small>
                                         <?php 
-                                        $url = $this->get_combination_url(
-                                            $combo->location_slug, 
-                                            $combo->specialty_slug,
-                                            $combo->custom_slug
-                                        );
+                                        if (!empty($combo->custom_slug)) {
+                                            $url = home_url($combo->custom_slug . '/');
+                                        } else {
+                                            $url = $this->build_combination_url(
+                                                $combo->location_slug, 
+                                                $combo->specialty_slug
+                                            );
+                                        }
                                         ?>
                                         <a href="<?php echo esc_url($url); ?>" target="_blank">
                                             View →
@@ -1144,11 +1147,14 @@ get_footer();
         <p>
             <strong>URL:</strong> 
             <?php 
-            $url = $this->get_combination_url(
-                $combo->location_slug, 
-                $combo->specialty_slug,
-                $combo->custom_slug
-            );
+            if (!empty($combo->custom_slug)) {
+                $url = home_url($combo->custom_slug . '/');
+            } else {
+                $url = $this->build_combination_url(
+                    $combo->location_slug, 
+                    $combo->specialty_slug
+                );
+            }
             ?>
             <a href="<?php echo esc_url($url); ?>" target="_blank">
                 <?php echo esc_url($url); ?>

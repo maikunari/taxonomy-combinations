@@ -36,11 +36,11 @@ This plugin solves the problem of targeting location-based SEO searches like "En
    
    Edit `taxonomy-combinations.php` and update these lines:
    ```php
-   private $post_type = 'your_post_type';  // Line 14 - Your CPT name
-   private $taxonomy_1 = 'specialties';    // Line 15 - First taxonomy
-   private $taxonomy_2 = 'locations';      // Line 16 - Second taxonomy
-   private $url_base = '';                 // Line 17 - URL base (empty for root)
-   private $url_pattern = 'combined';      // Line 18 - URL pattern
+   private $post_type = 'your_post_type';  // Line 16 - Your CPT name
+   private $taxonomy_1 = 'specialties';    // Line 17 - First taxonomy
+   private $taxonomy_2 = 'locations';      // Line 18 - Second taxonomy (note: 'location' not 'locations')
+   private $url_base = '';                 // Line 19 - URL base (empty for root)
+   private $url_pattern = 'combined';      // Line 20 - URL pattern
    ```
 
 3. **Activate the Plugin**

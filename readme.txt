@@ -35,8 +35,8 @@ This plugin creates virtual pages for every combination of two taxonomies (e.g.,
 == Installation ==
 
 1. Upload the `taxonomy-combinations` folder to `/wp-content/plugins/`
-2. Edit `taxonomy-combinations.php` line 14 to set your custom post type
-3. Verify taxonomy names on lines 15-16 match yours
+2. Edit `taxonomy-combinations.php` line 16 to set your custom post type
+3. Verify taxonomy names on lines 17-18 match yours
 4. Activate the plugin through the 'Plugins' menu
 5. Go to Settings → Permalinks and click "Save Changes"
 6. Visit "Tax Combinations" in your admin menu to manage pages
@@ -45,14 +45,14 @@ This plugin creates virtual pages for every combination of two taxonomies (e.g.,
 
 **Required Setup:**
 
-1. **Custom Post Type**: Edit line 14 to match your CPT name
+1. **Custom Post Type**: Edit line 16 to match your CPT name
    `private $post_type = 'your_post_type';`
 
-2. **Taxonomies**: Edit lines 15-16 to match your taxonomy names
+2. **Taxonomies**: Edit lines 17-18 to match your taxonomy names
    `private $taxonomy_1 = 'specialties';`
-   `private $taxonomy_2 = 'locations';`
+   `private $taxonomy_2 = 'location';`  // Note: singular 'location'
 
-3. **URL Pattern**: Choose your URL structure (line 17-18)
+3. **URL Pattern**: Choose your URL structure (lines 19-20)
    - Set `$url_base = ''` for root-level URLs
    - Set `$url_pattern = 'combined'` for SEO-friendly URLs
 
