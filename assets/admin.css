@@ -49,6 +49,52 @@
     color: #46b450;
 }
 
+/* Row Actions - WordPress Style */
+.wp-list-table .row-actions {
+    color: #787c82;
+    font-size: 13px;
+    padding: 2px 0 0;
+    position: relative;
+    visibility: hidden;
+}
+
+.wp-list-table tr:hover .row-actions {
+    visibility: visible;
+}
+
+.wp-list-table .row-actions span {
+    position: relative;
+}
+
+.wp-list-table .row-actions a {
+    text-decoration: none;
+}
+
+.wp-list-table .row-actions a:hover {
+    color: #2271b1;
+}
+
+/* Post Count Column */
+.wp-list-table td[style*="text-align: center"] {
+    font-weight: 600;
+}
+
+/* Tooltips for status icons */
+.dashicons[title] {
+    cursor: help;
+}
+
+/* Hover effect for table rows */
+.wp-list-table tbody tr:hover {
+    background-color: #f6f7f7;
+}
+
+/* Better spacing for title column */
+.wp-list-table td strong {
+    display: block;
+    margin-bottom: 2px;
+}
+
 .dashicons-warning {
     color: #ffb900;
 }

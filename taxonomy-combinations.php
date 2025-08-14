@@ -960,6 +960,11 @@ get_footer();
             $this->update_combination_data($_POST);
         }
         
+        // Handle clone action
+        if (isset($_GET['clone'])) {
+            $this->clone_combination(intval($_GET['clone']));
+        }
+        
         global $wpdb;
         
         // Get filter parameters
@@ -1010,9 +1015,20 @@ get_footer();
         $total_items = $wpdb->get_var($count_query);
         $total_pages = ceil($total_items / $per_page);
         
-        // Get combinations
+        // Get combinations with post count
         $query = "SELECT c.*, l.name as location_name, l.slug as location_slug, 
-                        s.name as specialty_name, s.slug as specialty_slug
+                        s.name as specialty_name, s.slug as specialty_slug,
+                        (SELECT COUNT(DISTINCT p.ID) 
+                         FROM {$wpdb->posts} p
+                         INNER JOIN {$wpdb->term_relationships} tr1 ON p.ID = tr1.object_id
+                         INNER JOIN {$wpdb->term_taxonomy} tt1 ON tr1.term_taxonomy_id = tt1.term_taxonomy_id
+                         INNER JOIN {$wpdb->term_relationships} tr2 ON p.ID = tr2.object_id
+                         INNER JOIN {$wpdb->term_taxonomy} tt2 ON tr2.term_taxonomy_id = tt2.term_taxonomy_id
+                         WHERE p.post_type = %s
+                         AND p.post_status = 'publish'
+                         AND tt1.term_id = c.location_id
+                         AND tt2.term_id = c.specialty_id
+                        ) as post_count
                  FROM {$this->table_name} c
                  LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
                  LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
@@ -1020,7 +1036,8 @@ get_footer();
                  ORDER BY l.name, s.name
                  LIMIT %d OFFSET %d";
         
-        $query_values = array_merge($where_values, array($per_page, $offset));
+        // Add post_type to the beginning of values for the subquery
+        $query_values = array_merge(array($this->post_type), $where_values, array($per_page, $offset));
         
         if (!empty($query_values)) {
             $query = $wpdb->prepare($query, $query_values);
@@ -1035,6 +1052,12 @@ get_footer();
         ?>
         <div class="wrap">
             <h1>Taxonomy Combination Pages</h1>
+            
+            <?php if (isset($_GET['cloned'])) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>Combination cloned successfully! You can now edit the cloned version.</p>
+                </div>
+            <?php endif; ?>
             
             <?php if (isset($_GET['edit'])) : 
                 $combo_id = intval($_GET['edit']);
@@ -1105,9 +1128,10 @@ get_footer();
                             <th>Specialty</th>
                             <th>Location</th>
                             <th>Title</th>
+                            <th style="width: 80px;">Providers</th>
                             <th>Content Block</th>
                             <th>SEO</th>
-                            <th>Actions</th>
+                            <th style="width: 100px;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1120,9 +1144,8 @@ get_footer();
                                 <td><?php echo esc_html($combo->specialty_name); ?></td>
                                 <td><?php echo esc_html($combo->location_name); ?></td>
                                 <td>
-                                    <?php echo esc_html($combo->custom_title); ?>
-                                    <br>
-                                    <small>
+                                    <strong><?php echo esc_html($combo->custom_title); ?></strong>
+                                    <div class="row-actions">
                                         <?php 
                                         if (!empty($combo->custom_slug)) {
                                             $url = home_url($combo->custom_slug . '/');
@@ -1132,11 +1155,28 @@ get_footer();
                                                 $combo->specialty_slug
                                             );
                                         }
+                                        $edit_url = admin_url('admin.php?page=taxonomy-combinations&edit=' . $combo->id);
+                                        $clone_url = admin_url('admin.php?page=taxonomy-combinations&clone=' . $combo->id);
                                         ?>
-                                        <a href="<?php echo esc_url($url); ?>" target="_blank">
-                                            View →
-                                        </a>
-                                    </small>
+                                        <span class="edit">
+                                            <a href="<?php echo esc_url($edit_url); ?>">Edit</a> | 
+                                        </span>
+                                        <span class="view">
+                                            <a href="<?php echo esc_url($url); ?>" target="_blank">View</a> | 
+                                        </span>
+                                        <span class="clone">
+                                            <a href="<?php echo esc_url($clone_url); ?>">Clone</a>
+                                        </span>
+                                    </div>
+                                </td>
+                                <td style="text-align: center;">
+                                    <?php 
+                                    $count = isset($combo->post_count) ? intval($combo->post_count) : 0;
+                                    $color = $count > 0 ? '#2271b1' : '#d63638';
+                                    ?>
+                                    <strong style="color: <?php echo $color; ?>; font-size: 16px;">
+                                        <?php echo $count; ?>
+                                    </strong>
                                 </td>
                                 <td>
                                     <?php if ($combo->content_block_id) : 
@@ -1164,9 +1204,17 @@ get_footer();
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="<?php echo admin_url('admin.php?page=taxonomy-combinations&edit=' . $combo->id); ?>" class="button button-small">
-                                        Edit
-                                    </a>
+                                    <?php if ($combo->robots_index) : ?>
+                                        <span class="dashicons dashicons-visibility" title="Indexed" style="color: green;"></span>
+                                    <?php else : ?>
+                                        <span class="dashicons dashicons-hidden" title="Noindex" style="color: orange;"></span>
+                                    <?php endif; ?>
+                                    
+                                    <?php if ($combo->robots_follow) : ?>
+                                        <span class="dashicons dashicons-admin-links" title="Follow" style="color: green;"></span>
+                                    <?php else : ?>
+                                        <span class="dashicons dashicons-editor-unlink" title="Nofollow" style="color: orange;"></span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -1453,6 +1501,58 @@ get_footer();
             'order' => 'ASC',
             'post_status' => 'publish'
         ));
+    }
+    
+    /**
+     * Clone Combination
+     */
+    private function clone_combination($combo_id) {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        
+        global $wpdb;
+        
+        // Get the original combination
+        $original = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE id = %d",
+            $combo_id
+        ));
+        
+        if (!$original) {
+            return;
+        }
+        
+        // Create a new combination with same data but different title
+        $new_title = $original->custom_title . ' (Copy)';
+        $new_slug = $original->custom_slug ? $original->custom_slug . '-copy' : '';
+        
+        // Insert the cloned combination
+        $result = $wpdb->insert(
+            $this->table_name,
+            array(
+                'location_id' => $original->location_id,
+                'specialty_id' => $original->specialty_id,
+                'custom_slug' => $new_slug,
+                'custom_title' => $new_title,
+                'custom_description' => $original->custom_description,
+                'meta_title' => $original->meta_title,
+                'meta_description' => $original->meta_description,
+                'custom_content' => $original->custom_content,
+                'header_content_block_id' => $original->header_content_block_id,
+                'content_block_id' => $original->content_block_id,
+                'footer_content_block_id' => $original->footer_content_block_id,
+                'use_global_template' => $original->use_global_template,
+                'robots_index' => $original->robots_index,
+                'robots_follow' => $original->robots_follow
+            )
+        );
+        
+        if ($result) {
+            $new_id = $wpdb->insert_id;
+            wp_redirect(admin_url('admin.php?page=taxonomy-combinations&edit=' . $new_id . '&cloned=1'));
+            exit;
+        }
     }
     
     /**
