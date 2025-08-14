@@ -1,0 +1,195 @@
+/* Admin CSS for Taxonomy Combination Plugin */
+
+/* Edit Form Tabs */
+.tc-edit-form {
+    margin-top: 20px;
+}
+
+.tc-edit-form .nav-tab-wrapper {
+    margin-bottom: 0;
+}
+
+.tc-edit-form .tab-content {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-top: none;
+    padding: 20px;
+}
+
+/* Bulk Edit Page */
+.tc-bulk-filters,
+.tc-bulk-actions {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.tc-bulk-filters h3,
+.tc-bulk-actions h3 {
+    margin-top: 0;
+}
+
+/* Table Enhancements */
+.wp-list-table .column-cb {
+    width: 50px !important;
+}
+
+.wp-list-table td small {
+    color: #666;
+}
+
+.wp-list-table td small a {
+    text-decoration: none;
+}
+
+/* Status Indicators */
+.dashicons-yes-alt,
+.dashicons-yes {
+    color: #46b450;
+}
+
+.dashicons-warning {
+    color: #ffb900;
+}
+
+.dashicons-minus {
+    color: #999;
+}
+
+/* Character Counters */
+#title-length,
+#desc-length {
+    font-weight: bold;
+}
+
+#title-length {
+    color: #666;
+}
+
+#meta_title[value].over-limit + .description #title-length,
+#meta_description.over-limit + .description #desc-length {
+    color: #dc3232;
+}
+
+/* Filter Form */
+.tablenav .alignleft select,
+.tablenav .alignleft input[type="text"] {
+    margin-right: 5px;
+}
+
+.tablenav .alignleft input[type="text"] {
+    width: 200px;
+}
+
+/* Content Block Selector */
+select#content_block_id,
+select#header_content_block_id,
+select#footer_content_block_id {
+    min-width: 300px;
+}
+
+/* Responsive Tables */
+@media screen and (max-width: 782px) {
+    .wp-list-table td {
+        display: block;
+        width: 100% !important;
+        padding: 10px 0;
+    }
+    
+    .wp-list-table td:before {
+        content: attr(data-label);
+        font-weight: bold;
+        display: inline-block;
+        width: 120px;
+    }
+    
+    .wp-list-table .column-cb {
+        display: table-cell;
+        width: 50px !important;
+    }
+}
+
+/* Loading States */
+.tc-loading {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.tc-loading:after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid #0073aa;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: tc-spin 1s linear infinite;
+}
+
+@keyframes tc-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Settings Page */
+.form-table code {
+    background: #f1f1f1;
+    padding: 2px 5px;
+    font-size: 13px;
+}
+
+.widefat td code {
+    background: #f1f1f1;
+    padding: 2px 5px;
+}
+
+/* Bulk Select */
+select[multiple] {
+    width: 100%;
+    max-width: 300px;
+}
+
+/* Success Messages */
+.notice-success {
+    border-left-color: #46b450;
+}
+
+/* Better Select All Checkbox */
+#cb-select-all {
+    cursor: pointer;
+}
+
+/* Improved Button Spacing */
+.submit .button {
+    margin-left: 10px;
+}
+
+/* Tab Content Spacing */
+.tab-content .form-table {
+    margin-top: 0;
+}
+
+.tab-content .form-table th {
+    width: 200px;
+}
+
+/* Description Text */
+.description {
+    color: #666;
+    font-style: italic;
+}
+
+/* Pagination */
+.tablenav-pages {
+    float: right;
+    margin-top: 8px;
+}
+
+.tablenav-pages .current-page {
+    padding: 0 5px;
+    width: 50px;
+    text-align: center;
+}
