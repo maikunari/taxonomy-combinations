@@ -46,9 +46,7 @@ class TaxonomyCombinationPages {
         add_action('init', array($this, 'register_sitemap_endpoint'));
         add_filter('wpseo_sitemap_tc_combinations_content', array($this, 'generate_sitemap_content'));
         
-        // Database setup
-        register_activation_hook(__FILE__, array($this, 'activate_plugin'));
-        register_deactivation_hook(__FILE__, array($this, 'deactivate_plugin'));
+        // Database setup hooks are registered outside the class
         
         // Auto-generate combinations
         add_action('created_term', array($this, 'handle_new_term'), 10, 3);
@@ -71,10 +69,21 @@ class TaxonomyCombinationPages {
      * Plugin Activation
      */
     public function activate_plugin() {
-        $this->create_database_table();
-        $this->generate_all_combinations();
-        $this->add_rewrite_rules();
-        flush_rewrite_rules();
+        // Suppress any output during activation
+        ob_start();
+        
+        try {
+            $this->create_database_table();
+            $this->generate_all_combinations();
+            $this->add_rewrite_rules();
+            flush_rewrite_rules();
+        } catch (Exception $e) {
+            // Log error silently
+            error_log('Taxonomy Combinations Plugin Activation Error: ' . $e->getMessage());
+        }
+        
+        // Clear any output
+        ob_end_clean();
     }
     
     /**
@@ -119,7 +128,11 @@ class TaxonomyCombinationPages {
         ) $charset_collate;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        
+        // Suppress dbDelta output
+        ob_start();
         dbDelta($sql);
+        ob_end_clean();
         
         // Add version option for future updates
         add_option('tc_plugin_version', '2.0');
@@ -129,20 +142,37 @@ class TaxonomyCombinationPages {
      * Generate all combinations on activation
      */
     public function generate_all_combinations() {
+        // Prevent timeout for large datasets
+        @set_time_limit(300); // 5 minutes
+        
         $locations = get_terms(array(
             'taxonomy' => $this->taxonomy_2,
-            'hide_empty' => false
+            'hide_empty' => false,
+            'number' => 500 // Limit to prevent memory issues
         ));
         
         $specialties = get_terms(array(
             'taxonomy' => $this->taxonomy_1,
-            'hide_empty' => false
+            'hide_empty' => false,
+            'number' => 500 // Limit to prevent memory issues
         ));
         
         if (!is_wp_error($locations) && !is_wp_error($specialties)) {
+            $total = count($locations) * count($specialties);
+            
+            // Warning for large datasets
+            if ($total > 10000) {
+                error_log('Taxonomy Combinations: Generating ' . $total . ' combinations. This may take some time.');
+            }
+            
             foreach ($locations as $location) {
                 foreach ($specialties as $specialty) {
                     $this->create_combination_entry($location->term_id, $specialty->term_id);
+                }
+                
+                // Free up memory periodically
+                if (function_exists('wp_cache_flush')) {
+                    wp_cache_flush();
                 }
             }
         }
@@ -385,7 +415,7 @@ $plugin->render_content_block("footer");
 get_footer();
 ';
         
-        file_put_contents($template_dir . '/taxonomy-combination.php', $template_content);
+        @file_put_contents($template_dir . '/taxonomy-combination.php', $template_content);
     }
     
     /**
@@ -448,8 +478,42 @@ get_footer();
         ));
         
         if (!$data) {
-            $this->create_combination_entry($location_id, $specialty_id);
-            return $this->get_combination_data($location_id, $specialty_id);
+            // Try to create the entry
+            $result = $this->create_combination_entry($location_id, $specialty_id);
+            
+            // If creation failed, return empty object to prevent errors
+            if ($result === false) {
+                $data = new stdClass();
+                $data->custom_title = 'Untitled';
+                $data->custom_description = '';
+                $data->custom_content = '';
+                $data->content_block_id = null;
+                $data->header_content_block_id = null;
+                $data->footer_content_block_id = null;
+                $data->robots_index = 1;
+                $data->robots_follow = 1;
+                return $data;
+            }
+            
+            // Try to fetch again, but don't recurse
+            $data = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$this->table_name} WHERE location_id = %d AND specialty_id = %d",
+                $location_id,
+                $specialty_id
+            ));
+            
+            if (!$data) {
+                // Still no data, return defaults
+                $data = new stdClass();
+                $data->custom_title = 'Untitled';
+                $data->custom_description = '';
+                $data->custom_content = '';
+                $data->content_block_id = null;
+                $data->header_content_block_id = null;
+                $data->footer_content_block_id = null;
+                $data->robots_index = 1;
+                $data->robots_follow = 1;
+            }
         }
         
         return $data;
@@ -603,39 +667,41 @@ get_footer();
         
         switch ($atts['field']) {
             case 'title':
-                $output = $tc_data['custom_data']->custom_title;
+                $output = isset($tc_data['custom_data']->custom_title) ? $tc_data['custom_data']->custom_title : '';
                 break;
             case 'description':
-                $output = $tc_data['custom_data']->custom_description;
+                $output = isset($tc_data['custom_data']->custom_description) ? $tc_data['custom_data']->custom_description : '';
                 break;
             case 'content':
-                $output = $tc_data['custom_data']->custom_content;
+                $output = isset($tc_data['custom_data']->custom_content) ? $tc_data['custom_data']->custom_content : '';
                 break;
             case 'location':
             case 'location_name':
-                $output = $tc_data['location']->name;
+                $output = isset($tc_data['location']->name) ? $tc_data['location']->name : '';
                 break;
             case 'location_slug':
-                $output = $tc_data['location']->slug;
+                $output = isset($tc_data['location']->slug) ? $tc_data['location']->slug : '';
                 break;
             case 'location_description':
-                $output = $tc_data['location']->description;
+                $output = isset($tc_data['location']->description) ? $tc_data['location']->description : '';
                 break;
             case 'specialty':
             case 'specialty_name':
-                $output = $tc_data['specialty']->name;
+                $output = isset($tc_data['specialty']->name) ? $tc_data['specialty']->name : '';
                 break;
             case 'specialty_slug':
-                $output = $tc_data['specialty']->slug;
+                $output = isset($tc_data['specialty']->slug) ? $tc_data['specialty']->slug : '';
                 break;
             case 'specialty_description':
-                $output = $tc_data['specialty']->description;
+                $output = isset($tc_data['specialty']->description) ? $tc_data['specialty']->description : '';
                 break;
             case 'url':
-                $output = home_url($this->url_base . '/' . $tc_data['location']->slug . '/' . $tc_data['specialty']->slug . '/');
+                $location_slug = isset($tc_data['location']->slug) ? $tc_data['location']->slug : '';
+                $specialty_slug = isset($tc_data['specialty']->slug) ? $tc_data['specialty']->slug : '';
+                $output = home_url($this->url_base . '/' . $location_slug . '/' . $specialty_slug . '/');
                 break;
             case 'post_count':
-                $output = $wp_query->found_posts;
+                $output = isset($wp_query->found_posts) ? $wp_query->found_posts : 0;
                 break;
         }
         
@@ -984,7 +1050,11 @@ get_footer();
                 
                 if ($combo) :
                     $this->render_edit_form($combo);
-                endif;
+                else : ?>
+                    <div class="notice notice-error">
+                        <p>Combination not found. <a href="<?php echo admin_url('admin.php?page=taxonomy-combinations'); ?>">Go back to list</a></p>
+                    </div>
+                <?php endif;
             else : ?>
                 
                 <!-- Filters -->
@@ -1459,12 +1529,14 @@ get_footer();
                                         'taxonomy' => $this->taxonomy_2,
                                         'hide_empty' => false
                                     ));
-                                    foreach ($locations as $location) :
+                                    if (!is_wp_error($locations)) {
+                                        foreach ($locations as $location) :
                                     ?>
                                         <option value="<?php echo $location->term_id; ?>">
                                             <?php echo esc_html($location->name); ?>
                                         </option>
-                                    <?php endforeach; ?>
+                                    <?php endforeach;
+                                    } ?>
                                 </select>
                                 <p class="description">Hold Ctrl/Cmd to select multiple</p>
                             </td>
@@ -1478,12 +1550,14 @@ get_footer();
                                         'taxonomy' => $this->taxonomy_1,
                                         'hide_empty' => false
                                     ));
-                                    foreach ($specialties as $specialty) :
+                                    if (!is_wp_error($specialties)) {
+                                        foreach ($specialties as $specialty) :
                                     ?>
                                         <option value="<?php echo $specialty->term_id; ?>">
                                             <?php echo esc_html($specialty->name); ?>
                                         </option>
-                                    <?php endforeach; ?>
+                                    <?php endforeach;
+                                    } ?>
                                 </select>
                                 <p class="description">Hold Ctrl/Cmd to select multiple</p>
                             </td>
@@ -1700,6 +1774,11 @@ get_footer();
      */
     public function ajax_get_combinations() {
         check_ajax_referer('tc_ajax_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Permission denied');
+            return;
+        }
         
         global $wpdb;
         
@@ -1938,7 +2017,16 @@ get_footer();
 }
 
 // Initialize the plugin
-new TaxonomyCombinationPages();
+$GLOBALS['tc_plugin_instance'] = new TaxonomyCombinationPages();
+
+// Register activation/deactivation hooks
+register_activation_hook(__FILE__, function() {
+    $GLOBALS['tc_plugin_instance']->activate_plugin();
+});
+
+register_deactivation_hook(__FILE__, function() {
+    $GLOBALS['tc_plugin_instance']->deactivate_plugin();
+});
 
 /**
  * Helper function to get combination data
