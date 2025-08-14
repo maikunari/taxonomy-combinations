@@ -155,7 +155,34 @@ class TaxonomyCombinationPages {
             // Pattern: /english-dentist-in-setagaya/
             // This requires combinations to have unique slugs
             add_rewrite_rule(
-                '([^/]+)-in-([^/]+)/?
+                '([^/]+)-in-([^/]+)/?$',
+                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1',
+                'top'
+            );
+            
+            // With pagination
+            add_rewrite_rule(
+                '([^/]+)-in-([^/]+)/page/([0-9]+)/?$',
+                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1&paged=$matches[3]',
+                'top'
+            );
+        } else {
+            // Hierarchical pattern: /services/location/specialty/ (if url_base is set)
+            $base = !empty($this->url_base) ? $this->url_base . '/' : '';
+            
+            add_rewrite_rule(
+                $base . '([^/]+)/([^/]+)/?$',
+                'index.php?tc_location=$matches[1]&tc_specialty=$matches[2]&tc_combo=1',
+                'top'
+            );
+            
+            add_rewrite_rule(
+                $base . '([^/]+)/([^/]+)/page/([0-9]+)/?$',
+                'index.php?tc_location=$matches[1]&tc_specialty=$matches[2]&tc_combo=1&paged=$matches[3]',
+                'top'
+            );
+        }
+    }
     
     /**
      * Query Variables
