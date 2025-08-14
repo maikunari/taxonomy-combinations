@@ -183,15 +183,29 @@ class TaxonomyCombinationPages {
      */
     public function add_rewrite_rules() {
         if ($this->url_pattern === 'combined') {
-            // Pattern: /english-dentist-in-setagaya/
-            // This requires combinations to have unique slugs
+            // Pattern: /english-[specialty]-in-[location]/
+            // The "english-" prefix is added for SEO but needs to be stripped when looking up taxonomies
+            add_rewrite_rule(
+                'english-([^/]+)-in-([^/]+)/?$',
+                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1',
+                'top'
+            );
+            
+            // With pagination
+            add_rewrite_rule(
+                'english-([^/]+)-in-([^/]+)/page/([0-9]+)/?$',
+                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1&paged=$matches[3]',
+                'top'
+            );
+            
+            // Also support URLs without "english-" prefix for backwards compatibility
             add_rewrite_rule(
                 '([^/]+)-in-([^/]+)/?$',
                 'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1',
                 'top'
             );
             
-            // With pagination
+            // With pagination (no prefix)
             add_rewrite_rule(
                 '([^/]+)-in-([^/]+)/page/([0-9]+)/?$',
                 'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1&paged=$matches[3]',
@@ -249,6 +263,22 @@ class TaxonomyCombinationPages {
         
         $location_slug = get_query_var('tc_location');
         $specialty_slug = get_query_var('tc_specialty');
+        
+        // Debug output (remove this after testing)
+        if (current_user_can('manage_options') && isset($_GET['debug'])) {
+            echo '<pre style="background: #fff; padding: 20px; margin: 20px;">';
+            echo '<strong>Query Variables:</strong>' . "\n";
+            echo 'tc_combo: ' . get_query_var('tc_combo') . "\n";
+            echo 'tc_location: ' . $location_slug . "\n";
+            echo 'tc_specialty: ' . $specialty_slug . "\n";
+            echo 'URL Pattern: ' . $this->url_pattern . "\n";
+            echo "\n<strong>Expected URL format:</strong>\n";
+            echo "english-[specialty]-in-[location]" . "\n";
+            echo "\n<strong>Your URL should parse to:</strong>\n";
+            echo "Specialty slug: dentistry (or dentist)" . "\n";
+            echo "Location slug: shibuya" . "\n";
+            echo '</pre>';
+        }
         
         // Verify taxonomies exist
         $location = get_term_by('slug', $location_slug, $this->taxonomy_2);
