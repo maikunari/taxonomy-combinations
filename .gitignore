@@ -1,0 +1,170 @@
+# WordPress Core
+/wordpress/
+/wp-admin/
+/wp-content/uploads/
+/wp-content/upgrade/
+/wp-content/backup-db/
+/wp-content/backups/
+/wp-content/blogs.dir/
+/wp-content/cache/
+/wp-content/advanced-cache.php
+/wp-content/wp-cache-config.php
+/wp-includes/
+/index.php
+/license.txt
+/readme.html
+/wp-*.php
+/xmlrpc.php
+
+# WordPress Configuration
+wp-config.php
+wp-config-local.php
+*.sql
+*.sql.gz
+
+# Plugin Development
+/node_modules/
+/vendor/
+/dist/
+/build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.project
+.settings/
+.tmproj
+*.tmproj
+*.esproj
+nbproject/
+.netbeans/
+
+# macOS System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.AppleDouble
+.LSOverride
+Icon
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows System Files
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Development Files
+*.map
+*.min.js.map
+*.css.map
+.sass-cache/
+.grunt/
+.tmp/
+
+# Testing
+/tests/reports/
+/coverage/
+.phpunit.result.cache
+phpunit.xml
+
+# Environment and Config
+.env
+.env.*
+!.env.example
+config.codekit
+config.codekit3
+prepros.config
+
+# Package Files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Backup Files
+*.bak
+*.backup
+*.old
+*.orig
+*.original
+*.tmp
+*.temp
+*.cache
+
+# Log Files
+*.log
+error_log
+access_log
+debug.log
+/logs/
+
+# Generated Documentation
+/docs/_build/
+/docs/.doctrees/
+
+# Plugin Specific (if you add these features later)
+/pro/
+/premium/
+/languages/*.mo
+/assets/dist/
+/assets/build/
+/templates/cache/
+
+# Keep these files
+!.gitignore
+!readme.txt
+!readme.md
+!LICENSE
+!composer.json
+!package.json
+!webpack.config.js
+!phpcs.xml
+!.editorconfig
+!.gitattributes
+
+# Local Development
+/local-config.php
+/.vagrant/
+/Vagrantfile
+/docker-compose.override.yml
+/.docker/
+
+# Security - Never commit these
+/auth.json
+/tokens.txt
+*.key
+*.pem
+*.crt
+*.p12
+/secrets/
