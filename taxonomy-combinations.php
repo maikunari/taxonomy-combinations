@@ -522,29 +522,25 @@ get_footer();
             return;
         }
         
-        // Try Blocksy's native rendering first
-        if (function_exists('blocksy_render_content_block')) {
-            echo blocksy_render_content_block($block_id);
-        } elseif (function_exists('blc_render_content_block')) {
-            echo blc_render_content_block($block_id);
-        } else {
-            // Fallback: render the content block manually
-            // This ensures our shortcodes are processed
-            $content = $block->post_content;
-            
-            // Process Gutenberg blocks if present
-            if (has_blocks($content)) {
-                $content = do_blocks($content);
-            }
-            
-            // Process shortcodes (including our tc_field shortcodes)
-            $content = do_shortcode($content);
-            
-            // Apply standard content filters
-            $content = apply_filters('the_content', $content);
-            
-            echo $content;
+        // Always use manual rendering to ensure our shortcodes work
+        // Get the content
+        $content = $block->post_content;
+        
+        // Process Gutenberg blocks if present
+        if (has_blocks($content)) {
+            $content = do_blocks($content);
         }
+        
+        // Process shortcodes (including our tc_field shortcodes)
+        $content = do_shortcode($content);
+        
+        // Apply standard content filters
+        $content = apply_filters('the_content', $content);
+        
+        // Wrap in a div for styling
+        echo '<div class="tc-content-block tc-' . esc_attr($position) . '-block" data-block-id="' . esc_attr($block_id) . '">';
+        echo $content;
+        echo '</div>';
     }
     
     /**
@@ -1112,19 +1108,23 @@ get_footer();
         $output = ob_get_clean();
         
         if ($output) {
-            // Replace "Specialty [Name]" pattern in ct-title-label spans
-            $pattern = '/<span([^>]*class="[^"]*ct-title-label[^"]*"[^>]*)>Specialty\s+' . preg_quote($specialty->name, '/') . '<\/span>/i';
-            $replacement = '<span$1>' . esc_html($data->custom_title) . '</span>';
-            $output = preg_replace($pattern, $replacement, $output);
+            // More aggressive title replacement
+            $patterns_to_replace = array(
+                // Pattern 1: Specialty [Name] in any context
+                '/Specialty\s+' . preg_quote($specialty->name, '/') . '/i',
+                // Pattern 2: Just the specialty name alone in title contexts
+                '/<span([^>]*class="[^"]*ct-title-label[^"]*"[^>]*)>' . preg_quote($specialty->name, '/') . '<\/span>/i',
+                // Pattern 3: In h1 tags
+                '/<h1([^>]*)>' . preg_quote($specialty->name, '/') . '<\/h1>/i',
+            );
             
-            // Also replace in any h1 tags that might contain the wrong title
-            $pattern = '/<h1([^>]*)>Specialty\s+' . preg_quote($specialty->name, '/') . '<\/h1>/i';
-            $replacement = '<h1$1>' . esc_html($data->custom_title) . '</h1>';
-            $output = preg_replace($pattern, $replacement, $output);
+            $replacements = array(
+                $data->custom_title,
+                '<span$1>' . esc_html($data->custom_title) . '</span>',
+                '<h1$1>' . esc_html($data->custom_title) . '</h1>',
+            );
             
-            // Replace any remaining instances of "Specialty [Name]" pattern
-            $pattern = '/Specialty\s+' . preg_quote($specialty->name, '/') . '(?![^<]*>)/i';
-            $output = preg_replace($pattern, $data->custom_title, $output);
+            $output = preg_replace($patterns_to_replace, $replacements, $output);
             
             echo $output;
         }
@@ -1564,27 +1564,21 @@ get_footer();
                         <tr>
                             <th><label for="custom_description">Short Description (Legacy)</label></th>
                             <td>
-                                <textarea id="custom_description" name="custom_description" rows="4" class="large-text">
-                                    <?php echo esc_textarea($combo->custom_description); ?>
-                                </textarea>
+                                <textarea id="custom_description" name="custom_description" rows="4" class="large-text"><?php echo esc_textarea($combo->custom_description); ?></textarea>
                                 <p class="description">Legacy field - use Brief Intro and Full Description instead.</p>
                             </td>
                         </tr>
                         <tr>
                             <th><label for="brief_intro">Brief Intro</label></th>
                             <td>
-                                <textarea id="brief_intro" name="brief_intro" rows="3" class="large-text">
-                                    <?php echo esc_textarea($combo->brief_intro ?? ''); ?>
-                                </textarea>
+                                <textarea id="brief_intro" name="brief_intro" rows="3" class="large-text"><?php echo esc_textarea($combo->brief_intro ?? ''); ?></textarea>
                                 <p class="description">Short introduction shown above the main content. Use shortcode [tc_field field="brief_intro"] in Content Blocks.</p>
                             </td>
                         </tr>
                         <tr>
                             <th><label for="full_description">Full Description</label></th>
                             <td>
-                                <textarea id="full_description" name="full_description" rows="6" class="large-text">
-                                    <?php echo esc_textarea($combo->full_description ?? ''); ?>
-                                </textarea>
+                                <textarea id="full_description" name="full_description" rows="6" class="large-text"><?php echo esc_textarea($combo->full_description ?? ''); ?></textarea>
                                 <p class="description">Detailed description shown below the main content. Use shortcode [tc_field field="full_description"] in Content Blocks.</p>
                             </td>
                         </tr>
