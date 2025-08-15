@@ -2,7 +2,10 @@
 /**
  * Database Fix Script - Run this once to add missing columns
  * 
- * Usage: Add to WordPress root and access via browser, then delete
+ * Usage: 
+ * 1. Upload this file to WordPress root directory (same location as wp-config.php)
+ * 2. Access via browser at https://yoursite.com/fix-database.php
+ * 3. Delete this file immediately after running
  */
 
 // Load WordPress

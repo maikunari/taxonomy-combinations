@@ -41,16 +41,24 @@ class TaxonomyCombinationPages {
         add_filter('wpseo_opengraph_url', array($this, 'modify_yoast_canonical'));
         add_filter('wpseo_robots', array($this, 'modify_yoast_robots'));
         
-        // Theme title overrides
-        add_filter('single_term_title', array($this, 'modify_archive_title'), 10, 2);
-        add_filter('get_the_archive_title', array($this, 'modify_archive_title_display'), 10);
-        add_filter('document_title_parts', array($this, 'modify_document_title_parts'), 10);
+        // Theme title overrides - Higher priority
+        add_filter('single_term_title', array($this, 'modify_archive_title'), 1, 2);
+        add_filter('get_the_archive_title', array($this, 'modify_archive_title_display'), 1);
+        add_filter('document_title_parts', array($this, 'modify_document_title_parts'), 1);
+        add_filter('wp_title', array($this, 'modify_wp_title'), 1, 2);
         
-        // Blocksy specific title override
-        add_filter('blocksy:hero:title', array($this, 'modify_blocksy_hero_title'), 10);
-        add_filter('blocksy:archive:render-card-layer', array($this, 'modify_blocksy_archive_card'), 10, 2);
+        // Blocksy specific hooks - Try multiple approaches
+        add_filter('blocksy:hero:title', array($this, 'modify_blocksy_hero_title'), 1);
+        add_filter('blocksy:archive:render-card-layer', array($this, 'modify_blocksy_archive_card'), 1, 2);
+        add_filter('blocksy_hero_title', array($this, 'modify_blocksy_hero_title'), 1);
+        add_filter('blocksy_archive_title', array($this, 'modify_blocksy_hero_title'), 1);
+        add_filter('blocksy:archive:title', array($this, 'modify_blocksy_hero_title'), 1);
         
-        // Start output buffering to replace titles
+        // Blocksy page title components
+        add_filter('blocksy_page_title', array($this, 'modify_blocksy_hero_title'), 1);
+        add_filter('blocksy:page-title:title', array($this, 'modify_blocksy_hero_title'), 1);
+        
+        // Start output buffering to replace titles as last resort
         add_action('template_redirect', array($this, 'start_title_replacement_buffer'), 1);
         add_action('shutdown', array($this, 'end_title_replacement_buffer'), 999);
         
@@ -1030,6 +1038,23 @@ get_footer();
     }
     
     /**
+     * Modify WP Title
+     */
+    public function modify_wp_title($title, $sep = '') {
+        if (!get_query_var('tc_combo')) {
+            return $title;
+        }
+        
+        global $wp_query;
+        if (isset($wp_query->tc_data['custom_data'])) {
+            $data = $wp_query->tc_data['custom_data'];
+            return $data->custom_title;
+        }
+        
+        return $title;
+    }
+    
+    /**
      * Modify Blocksy Hero Title
      */
     public function modify_blocksy_hero_title($title) {
@@ -1108,23 +1133,40 @@ get_footer();
         $output = ob_get_clean();
         
         if ($output) {
-            // More aggressive title replacement
-            $patterns_to_replace = array(
-                // Pattern 1: Specialty [Name] in any context
-                '/Specialty\s+' . preg_quote($specialty->name, '/') . '/i',
-                // Pattern 2: Just the specialty name alone in title contexts
-                '/<span([^>]*class="[^"]*ct-title-label[^"]*"[^>]*)>' . preg_quote($specialty->name, '/') . '<\/span>/i',
-                // Pattern 3: In h1 tags
-                '/<h1([^>]*)>' . preg_quote($specialty->name, '/') . '<\/h1>/i',
+            // Very aggressive title replacement - multiple patterns
+            $custom_title = esc_html($data->custom_title);
+            
+            // Pattern 1: Replace "Specialty [Name]" anywhere
+            $output = preg_replace('/Specialty\s+' . preg_quote($specialty->name, '/') . '/i', $custom_title, $output);
+            
+            // Pattern 2: Replace just the specialty name in specific contexts
+            // In ct-title-label spans
+            $output = preg_replace(
+                '/<span([^>]*class="[^"]*ct-title-label[^"]*"[^>]*)>[^<]*' . preg_quote($specialty->name, '/') . '[^<]*<\/span>/i',
+                '<span$1>' . $custom_title . '</span>',
+                $output
             );
             
-            $replacements = array(
-                $data->custom_title,
-                '<span$1>' . esc_html($data->custom_title) . '</span>',
-                '<h1$1>' . esc_html($data->custom_title) . '</h1>',
+            // Pattern 3: In any h1 tags
+            $output = preg_replace(
+                '/<h1([^>]*)>[^<]*' . preg_quote($specialty->name, '/') . '[^<]*<\/h1>/i',
+                '<h1$1>' . $custom_title . '</h1>',
+                $output
             );
             
-            $output = preg_replace($patterns_to_replace, $replacements, $output);
+            // Pattern 4: In Blocksy's page title structure
+            $output = preg_replace(
+                '/(<div[^>]*class="[^"]*ct-page-title[^"]*"[^>]*>.*?<h1[^>]*>)[^<]*(Specialty\s+)?' . preg_quote($specialty->name, '/') . '[^<]*(<\/h1>)/is',
+                '$1' . $custom_title . '$3',
+                $output
+            );
+            
+            // Pattern 5: Replace in title attributes
+            $output = preg_replace(
+                '/title="[^"]*Specialty\s+' . preg_quote($specialty->name, '/') . '[^"]*"/i',
+                'title="' . $custom_title . '"',
+                $output
+            );
             
             echo $output;
         }
@@ -1930,9 +1972,9 @@ get_footer();
                     <h3>Bulk Actions</h3>
                     <table class="form-table">
                         <tr>
-                            <th>Content Block</th>
+                            <th>Header Content Block</th>
                             <td>
-                                <select name="bulk_content_block_id">
+                                <select name="bulk_header_content_block_id">
                                     <option value="">— No Change —</option>
                                     <option value="0">— Remove Block —</option>
                                     <?php
@@ -1944,6 +1986,37 @@ get_footer();
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
+                                <p class="description">Content block to display before main content on all selected pages.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Main Content Block</th>
+                            <td>
+                                <select name="bulk_content_block_id">
+                                    <option value="">— No Change —</option>
+                                    <option value="0">— Use Default Layout —</option>
+                                    <?php foreach ($blocks as $block) : ?>
+                                        <option value="<?php echo $block->ID; ?>">
+                                            <?php echo esc_html($block->post_title); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">Main content template for all selected pages.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Footer Content Block</th>
+                            <td>
+                                <select name="bulk_footer_content_block_id">
+                                    <option value="">— No Change —</option>
+                                    <option value="0">— Remove Block —</option>
+                                    <?php foreach ($blocks as $block) : ?>
+                                        <option value="<?php echo $block->ID; ?>">
+                                            <?php echo esc_html($block->post_title); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">Content block to display after main content on all selected pages.</p>
                             </td>
                         </tr>
                         <tr>
@@ -2008,9 +2081,19 @@ get_footer();
         $update_parts = array();
         $update_values = array();
         
+        if (isset($data['bulk_header_content_block_id']) && $data['bulk_header_content_block_id'] !== '') {
+            $update_parts[] = 'header_content_block_id = %s';
+            $update_values[] = ($data['bulk_header_content_block_id'] === '0') ? null : intval($data['bulk_header_content_block_id']);
+        }
+        
         if (isset($data['bulk_content_block_id']) && $data['bulk_content_block_id'] !== '') {
-            $update_parts[] = 'content_block_id = %d';
-            $update_values[] = intval($data['bulk_content_block_id']);
+            $update_parts[] = 'content_block_id = %s';
+            $update_values[] = ($data['bulk_content_block_id'] === '0') ? null : intval($data['bulk_content_block_id']);
+        }
+        
+        if (isset($data['bulk_footer_content_block_id']) && $data['bulk_footer_content_block_id'] !== '') {
+            $update_parts[] = 'footer_content_block_id = %s';
+            $update_values[] = ($data['bulk_footer_content_block_id'] === '0') ? null : intval($data['bulk_footer_content_block_id']);
         }
         
         if (isset($data['bulk_robots_index']) && $data['bulk_robots_index'] !== '') {
