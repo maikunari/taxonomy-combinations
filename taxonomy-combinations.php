@@ -18,15 +18,18 @@ class TaxonomyCombinationPages {
     private $taxonomy_1 = 'specialties';
     private $taxonomy_2 = 'location';  // Note: singular 'location' not 'locations'
     private $cpt_slug = 'tc_combination';
+    private $provider_cpt = 'healthcare_provider'; // The actual provider post type
     private $table_name;
+    private $original_query; // Store original query when converting to archive
+    private $combination_post; // Store the combination post
     
     public function __construct() {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'taxonomy_combinations';
         
         // Core hooks
-        add_action('init', array($this, 'register_post_type'));
-        add_action('init', array($this, 'register_post_meta'));
+        // CPT will be registered via CPT UI - only register meta fields
+        add_action('init', array($this, 'register_post_meta'), 20); // Priority 20 to run after CPT UI
         
         // Admin interface
         add_action('admin_menu', array($this, 'add_admin_menu'));
@@ -40,51 +43,54 @@ class TaxonomyCombinationPages {
         add_shortcode('tc_field', array($this, 'shortcode_tc_field'));
         add_shortcode('tc_posts', array($this, 'shortcode_tc_posts'));
         
+        // Filter for GreenShift or other query builders
+        add_filter('pre_get_posts', array($this, 'modify_provider_query_for_combinations'));
+        
         // URL handling for english- prefix
         add_filter('post_type_link', array($this, 'modify_combination_permalink'), 10, 2);
         add_action('init', array($this, 'add_rewrite_rules'), 0);
+        
+        // Make combination pages act like archives
+        add_action('template_redirect', array($this, 'setup_combination_as_archive'));
+        add_filter('template_include', array($this, 'use_archive_template'), 99);
+        
+        // Customize archive title and add content blocks
+        add_filter('get_the_archive_title', array($this, 'customize_archive_title'));
+        add_filter('the_archive_title', array($this, 'customize_archive_title'));
+        
+        // Add content blocks using WordPress actions that work with most themes
+        add_action('wp', array($this, 'setup_content_block_hooks'));
         
         // Activation hook
         register_activation_hook(__FILE__, array($this, 'activate_plugin'));
     }
     
     /**
-     * Register Custom Post Type
+     * CPT Registration - Now handled by CPT UI
+     * 
+     * CPT UI Settings to use:
+     * - Post Type Slug: tc_combination
+     * - Plural Label: Combinations
+     * - Singular Label: Combination
+     * - Public: true
+     * - Has Archive: false
+     * - Rewrite: false (we handle custom URLs)
+     * - Show in REST: true
+     * - REST API Base Slug: tc_combination
+     * - Supports: title, editor, custom-fields, revisions
+     * - Show UI: true (or false if managing through plugin)
+     * - Show in Menu: true (or false if using plugin menu)
      */
-    public function register_post_type() {
-        // Only register if not already registered by CPT UI
-        if (!post_type_exists($this->cpt_slug)) {
-            register_post_type($this->cpt_slug, array(
-                'labels' => array(
-                    'name' => 'Combinations',
-                    'singular_name' => 'Combination',
-                    'add_new' => 'Add New',
-                    'add_new_item' => 'Add New Combination',
-                    'edit_item' => 'Edit Combination',
-                    'new_item' => 'New Combination',
-                    'view_item' => 'View Combination',
-                    'search_items' => 'Search Combinations',
-                    'not_found' => 'No combinations found',
-                    'not_found_in_trash' => 'No combinations found in trash'
-                ),
-                'public' => true,
-                'publicly_queryable' => true,
-                'show_ui' => false, // We'll manage through our own interface
-                'show_in_menu' => false,
-                'show_in_rest' => true,
-                'rest_base' => 'tc_combination',
-                'has_archive' => false,
-                'rewrite' => false, // We'll handle our own rewrites
-                'supports' => array('title', 'editor', 'custom-fields', 'revisions'),
-                'capability_type' => 'page'
-            ));
-        }
-    }
     
     /**
      * Register Post Meta Fields
      */
     public function register_post_meta() {
+        // Check if CPT exists (wait for CPT UI to register it)
+        if (!post_type_exists($this->cpt_slug)) {
+            return;
+        }
+        
         // Register meta fields for REST API visibility
         $meta_fields = array(
             '_tc_location_id' => 'integer',
@@ -144,7 +150,7 @@ class TaxonomyCombinationPages {
      * Plugin Activation
      */
     public function activate_plugin() {
-        $this->register_post_type();
+        // CPT registered via CPT UI, just flush rewrite rules
         flush_rewrite_rules();
         
         // Check if migration is needed
@@ -952,6 +958,22 @@ class TaxonomyCombinationPages {
             case 'url':
                 return get_permalink($post->ID);
                 
+            case 'location_id':
+                return get_post_meta($post->ID, '_tc_location_id', true);
+                
+            case 'specialty_id':
+                return get_post_meta($post->ID, '_tc_specialty_id', true);
+                
+            case 'location_slug':
+                $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+                $location = get_term($location_id, $this->taxonomy_2);
+                return $location ? $location->slug : '';
+                
+            case 'specialty_slug':
+                $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+                $specialty = get_term($specialty_id, $this->taxonomy_1);
+                return $specialty ? $specialty->slug : '';
+                
             default:
                 return '';
         }
@@ -1028,6 +1050,466 @@ class TaxonomyCombinationPages {
         wp_reset_postdata();
         
         return ob_get_clean();
+    }
+    
+    /**
+     * Setup combination page to act like an archive
+     */
+    public function setup_combination_as_archive() {
+        if (!is_singular($this->cpt_slug)) {
+            return;
+        }
+        
+        global $wp_query, $post;
+        
+        // Get the combination's taxonomies
+        $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+        $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+        
+        // Validate and get terms
+        $location_term = get_term($location_id, $this->taxonomy_2);
+        $specialty_term = get_term($specialty_id, $this->taxonomy_1);
+        
+        // Fallback to slug parsing if needed
+        if (!$location_term || is_wp_error($location_term) || !$specialty_term || is_wp_error($specialty_term)) {
+            $slug = $post->post_name;
+            if (preg_match('/^english-(.+)-in-(.+)$/', $slug, $matches)) {
+                if (!$specialty_term || is_wp_error($specialty_term)) {
+                    $specialty_term = get_term_by('slug', $matches[1], $this->taxonomy_1);
+                    if ($specialty_term) {
+                        $specialty_id = $specialty_term->term_id;
+                        update_post_meta($post->ID, '_tc_specialty_id', $specialty_id);
+                    }
+                }
+                if (!$location_term || is_wp_error($location_term)) {
+                    $location_term = get_term_by('slug', $matches[2], $this->taxonomy_2);
+                    if ($location_term) {
+                        $location_id = $location_term->term_id;
+                        update_post_meta($post->ID, '_tc_location_id', $location_id);
+                    }
+                }
+            }
+        }
+        
+        if (!$location_id || !$specialty_id) {
+            return;
+        }
+        
+        // Create a new query for providers
+        $provider_args = array(
+            'post_type' => $this->provider_cpt,
+            'posts_per_page' => get_option('posts_per_page', 10),
+            'paged' => get_query_var('paged') ? get_query_var('paged') : 1,
+            'post_status' => 'publish',
+            'tax_query' => array(
+                'relation' => 'AND',
+                array(
+                    'taxonomy' => $this->taxonomy_1,
+                    'field' => 'term_id',
+                    'terms' => $specialty_id
+                ),
+                array(
+                    'taxonomy' => $this->taxonomy_2,
+                    'field' => 'term_id',
+                    'terms' => $location_id
+                )
+            ),
+            'orderby' => 'title',
+            'order' => 'ASC'
+        );
+        
+        // Replace the main query with our provider query
+        $provider_query = new WP_Query($provider_args);
+        
+        // Make WordPress think this is an archive
+        if ($provider_query->have_posts()) {
+            // Store original query
+            $this->original_query = $wp_query;
+            $this->combination_post = $post;
+            
+            // Replace global query
+            $wp_query = $provider_query;
+            
+            // Set archive flags
+            $wp_query->is_archive = true;
+            $wp_query->is_post_type_archive = true;
+            $wp_query->is_singular = false;
+            $wp_query->is_single = false;
+        }
+    }
+    
+    /**
+     * Use archive template for combination pages
+     */
+    public function use_archive_template($template) {
+        if (!is_singular($this->cpt_slug)) {
+            return $template;
+        }
+        
+        // Try to use the healthcare_provider archive template
+        $archive_template = locate_template(array(
+            'archive-healthcare_provider.php',
+            'archive.php'
+        ));
+        
+        if ($archive_template) {
+            return $archive_template;
+        }
+        
+        return $template;
+    }
+    
+    /**
+     * Restore original query after rendering (cleanup)
+     */
+    public function restore_original_query() {
+        if (isset($this->original_query)) {
+            global $wp_query;
+            $wp_query = $this->original_query;
+            unset($this->original_query);
+        }
+    }
+    
+    /**
+     * Customize the archive title for combination pages
+     */
+    public function customize_archive_title($title) {
+        if (isset($this->combination_post)) {
+            return $this->combination_post->post_title;
+        }
+        return $title;
+    }
+    
+    /**
+     * Add header content to the loop
+     */
+    public function add_header_content($query) {
+        // Only on main query for our combination pages
+        if (!$query->is_main_query() || !isset($this->combination_post)) {
+            return;
+        }
+        
+        $this->render_header_content();
+    }
+    
+    /**
+     * Add footer content to the loop
+     */
+    public function add_footer_content($query) {
+        // Only on main query for our combination pages
+        if (!$query->is_main_query() || !isset($this->combination_post)) {
+            return;
+        }
+        
+        $this->render_footer_content();
+    }
+    
+    /**
+     * Render header content (brief intro and header block)
+     */
+    public function render_header_content() {
+        if (!isset($this->combination_post)) {
+            return;
+        }
+        
+        $post = $this->combination_post;
+        
+        // Get brief intro
+        $brief_intro = get_post_meta($post->ID, '_tc_brief_intro', true);
+        if (!empty($brief_intro)) {
+            echo '<div class="tc-brief-intro alignwide">' . wpautop($brief_intro) . '</div>';
+        }
+        
+        // Get header block
+        $header_block_id = get_post_meta($post->ID, '_tc_header_block_id', true);
+        if (!empty($header_block_id)) {
+            if (function_exists('blc_render_content_block')) {
+                echo blc_render_content_block($header_block_id);
+            } else {
+                $block = get_post($header_block_id);
+                if ($block && $block->post_type === 'ct_content_block') {
+                    echo apply_filters('the_content', $block->post_content);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Render footer content (full description and footer block)
+     */
+    public function render_footer_content() {
+        if (!isset($this->combination_post)) {
+            return;
+        }
+        
+        $post = $this->combination_post;
+        
+        // Get full description
+        $full_description = get_post_meta($post->ID, '_tc_full_description', true);
+        if (!empty($full_description)) {
+            echo '<div class="tc-full-description alignwide">' . wpautop($full_description) . '</div>';
+        }
+        
+        // Get footer block
+        $footer_block_id = get_post_meta($post->ID, '_tc_footer_block_id', true);
+        if (!empty($footer_block_id)) {
+            if (function_exists('blc_render_content_block')) {
+                echo blc_render_content_block($footer_block_id);
+            } else {
+                $block = get_post($footer_block_id);
+                if ($block && $block->post_type === 'ct_content_block') {
+                    echo apply_filters('the_content', $block->post_content);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Filter content to add brief intro and full description (DEPRECATED - keeping for reference)
+     */
+    public function filter_combination_content_old($content) {
+        global $post;
+        
+        // Only filter for our CPT on single pages
+        if (!is_singular($this->cpt_slug)) {
+            return $content;
+        }
+        
+        $brief_intro = get_post_meta($post->ID, '_tc_brief_intro', true);
+        $full_description = get_post_meta($post->ID, '_tc_full_description', true);
+        $content_block_id = get_post_meta($post->ID, '_tc_content_block_id', true);
+        
+        // Build the output
+        $output = '';
+        
+        // Add brief intro if exists
+        if (!empty($brief_intro)) {
+            $output .= '<div class="tc-brief-intro">' . wpautop($brief_intro) . '</div>';
+        }
+        
+        // Get the location and specialty for this combination
+        $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+        $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+        
+        // Validate term IDs exist, fallback to slug parsing if needed
+        $location_term = get_term($location_id, $this->taxonomy_2);
+        $specialty_term = get_term($specialty_id, $this->taxonomy_1);
+        
+        // If terms don't exist, try to parse from slug
+        if (!$location_term || is_wp_error($location_term) || !$specialty_term || is_wp_error($specialty_term)) {
+            $slug = $post->post_name;
+            if (preg_match('/^english-(.+)-in-(.+)$/', $slug, $matches)) {
+                $specialty_slug = $matches[1];
+                $location_slug = $matches[2];
+                
+                // Try to get terms by slug if IDs failed
+                if (!$specialty_term || is_wp_error($specialty_term)) {
+                    $specialty_term = get_term_by('slug', $specialty_slug, $this->taxonomy_1);
+                    if ($specialty_term) {
+                        $specialty_id = $specialty_term->term_id;
+                        // Update the meta for next time
+                        update_post_meta($post->ID, '_tc_specialty_id', $specialty_id);
+                    }
+                }
+                
+                if (!$location_term || is_wp_error($location_term)) {
+                    $location_term = get_term_by('slug', $location_slug, $this->taxonomy_2);
+                    if ($location_term) {
+                        $location_id = $location_term->term_id;
+                        // Update the meta for next time
+                        update_post_meta($post->ID, '_tc_location_id', $location_id);
+                    }
+                }
+            }
+        }
+        
+        // Only query if we have valid terms
+        if (!$location_id || !$specialty_id) {
+            return '<p>Error: Unable to determine location or specialty for this combination.</p>' . $content;
+        }
+        
+        // Query for providers with these taxonomies
+        $provider_args = array(
+            'post_type' => $this->provider_cpt, // Use healthcare_provider
+            'posts_per_page' => -1,
+            'post_status' => 'publish',
+            'tax_query' => array(
+                'relation' => 'AND',
+                array(
+                    'taxonomy' => $this->taxonomy_1, // specialties
+                    'field' => 'term_id',
+                    'terms' => $specialty_id
+                ),
+                array(
+                    'taxonomy' => $this->taxonomy_2, // location
+                    'field' => 'term_id',
+                    'terms' => $location_id
+                )
+            ),
+            'orderby' => 'title',
+            'order' => 'ASC'
+        );
+        
+        $providers = new WP_Query($provider_args);
+        
+        // Add the provider listings
+        if ($providers->have_posts()) {
+            $output .= '<div class="tc-providers-list">';
+            
+            // Check if we have a content block for styling
+            if (!empty($content_block_id)) {
+                // Get the content block
+                $block = get_post($content_block_id);
+                if ($block && $block->post_type === 'ct_content_block') {
+                    // Loop through providers and render the template for each
+                    while ($providers->have_posts()) {
+                        $providers->the_post();
+                        
+                        // Apply the content block template to each provider
+                        $rendered = do_blocks($block->post_content);
+                        $rendered = do_shortcode($rendered);
+                        $output .= $rendered;
+                    }
+                    wp_reset_postdata();
+                } else {
+                    // Fallback
+                    while ($providers->have_posts()) {
+                        $providers->the_post();
+                        $output .= '<article class="provider-item">';
+                        $output .= '<h3><a href="' . get_permalink() . '">' . get_the_title() . '</a></h3>';
+                        if (has_excerpt()) {
+                            $output .= '<p>' . get_the_excerpt() . '</p>';
+                        }
+                        $output .= '</article>';
+                    }
+                    wp_reset_postdata();
+                }
+            } else {
+                // Fallback: Simple provider listing
+                $output .= '<div class="providers-grid">';
+                while ($providers->have_posts()) {
+                    $providers->the_post();
+                    $output .= '<article class="provider-item">';
+                    $output .= '<h3><a href="' . get_permalink() . '">' . get_the_title() . '</a></h3>';
+                    if (has_excerpt()) {
+                        $output .= '<p>' . get_the_excerpt() . '</p>';
+                    }
+                    $output .= '</article>';
+                }
+                $output .= '</div>';
+                wp_reset_postdata();
+            }
+            
+            $output .= '</div>';
+        } else {
+            $output .= '<p>No providers found for this combination.</p>';
+        }
+        
+        // Add full description if exists
+        if (!empty($full_description)) {
+            $output .= '<div class="tc-full-description">' . wpautop($full_description) . '</div>';
+        }
+        
+        return $output;
+    }
+    
+    /**
+     * Render header content block
+     */
+    public function render_header_block() {
+        global $post;
+        
+        // Only render for our CPT
+        if (!is_singular($this->cpt_slug)) {
+            return;
+        }
+        
+        $header_block_id = get_post_meta($post->ID, '_tc_header_block_id', true);
+        
+        if (!empty($header_block_id)) {
+            // Use Blocksy's actual render function
+            if (function_exists('blc_render_content_block')) {
+                echo blc_render_content_block($header_block_id);
+            } else {
+                // Fallback: get the content block post directly
+                $block = get_post($header_block_id);
+                if ($block && $block->post_type === 'ct_content_block') {
+                    echo apply_filters('the_content', $block->post_content);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Modify provider queries on combination pages
+     */
+    public function modify_provider_query_for_combinations($query) {
+        // Only on frontend, for provider queries on combination pages
+        if (!is_admin() && is_singular($this->cpt_slug)) {
+            // Check if this is a provider query
+            if ($query->get('post_type') === $this->provider_cpt || 
+                (is_array($query->get('post_type')) && in_array($this->provider_cpt, $query->get('post_type')))) {
+                
+                global $post;
+                if ($post && $post->post_type === $this->cpt_slug) {
+                    $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+                    $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+                    
+                    // Add tax query if not already set
+                    $existing_tax_query = $query->get('tax_query') ?: array();
+                    
+                    $new_tax_query = array(
+                        'relation' => 'AND',
+                        array(
+                            'taxonomy' => $this->taxonomy_1,
+                            'field' => 'term_id',
+                            'terms' => $specialty_id
+                        ),
+                        array(
+                            'taxonomy' => $this->taxonomy_2,
+                            'field' => 'term_id',
+                            'terms' => $location_id
+                        )
+                    );
+                    
+                    // Merge with existing tax query if needed
+                    if (!empty($existing_tax_query)) {
+                        $new_tax_query[] = $existing_tax_query;
+                    }
+                    
+                    $query->set('tax_query', $new_tax_query);
+                }
+            }
+        }
+        
+        return $query;
+    }
+    
+    /**
+     * Render footer content block
+     */
+    public function render_footer_block() {
+        global $post;
+        
+        // Only render for our CPT
+        if (!is_singular($this->cpt_slug)) {
+            return;
+        }
+        
+        $footer_block_id = get_post_meta($post->ID, '_tc_footer_block_id', true);
+        
+        if (!empty($footer_block_id)) {
+            // Use Blocksy's actual render function
+            if (function_exists('blc_render_content_block')) {
+                echo blc_render_content_block($footer_block_id);
+            } else {
+                // Fallback: get the content block post directly
+                $block = get_post($footer_block_id);
+                if ($block && $block->post_type === 'ct_content_block') {
+                    echo apply_filters('the_content', $block->post_content);
+                }
+            }
+        }
     }
 }
 
