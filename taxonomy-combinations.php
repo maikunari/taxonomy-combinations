@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Taxonomy Combination Pages with Blocksy
- * Description: Creates virtual pages for taxonomy combinations with SEO support and Blocksy Content Blocks integration
- * Version: 2.1
+ * Description: Creates real pages for taxonomy combinations with full WordPress compatibility
+ * Version: 3.0
  * Author: maikunari
  */
 
@@ -13,1163 +13,142 @@ if (!defined('ABSPATH')) {
 
 class TaxonomyCombinationPages {
     
-    private $post_type = 'healthcare_provider'; // CHANGE THIS to your CPT
+    // Configuration - Update these for your setup
+    private $post_type = 'healthcare_provider';
     private $taxonomy_1 = 'specialties';
-    private $taxonomy_2 = 'location';
-    private $url_base = ''; // Leave empty for root-level URLs
-    private $url_pattern = 'combined'; // 'combined' or 'hierarchical'
+    private $taxonomy_2 = 'location';  // Note: singular 'location' not 'locations'
+    private $cpt_slug = 'tc_combination';
     private $table_name;
     
     public function __construct() {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'taxonomy_combinations';
         
-        // Core functionality
-        add_action('init', array($this, 'add_rewrite_rules'));
-        add_filter('query_vars', array($this, 'add_query_vars'));
-        add_action('template_redirect', array($this, 'handle_virtual_page'));
-        add_action('template_redirect', array($this, 'handle_sitemap_request'));
+        // Core hooks
+        add_action('init', array($this, 'register_post_type'));
+        add_action('init', array($this, 'register_post_meta'));
         
         // Admin interface
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'admin_scripts'));
         
-        // Yoast SEO Integration
-        add_filter('wpseo_title', array($this, 'modify_yoast_title'));
-        add_filter('wpseo_metadesc', array($this, 'modify_yoast_description'));
-        add_filter('wpseo_canonical', array($this, 'modify_yoast_canonical'));
-        add_filter('wpseo_opengraph_url', array($this, 'modify_yoast_canonical'));
-        add_filter('wpseo_robots', array($this, 'modify_yoast_robots'));
+        // Auto-generation hooks
+        add_action('created_' . $this->taxonomy_1, array($this, 'generate_combinations_for_new_term'), 10, 2);
+        add_action('created_' . $this->taxonomy_2, array($this, 'generate_combinations_for_new_term'), 10, 2);
         
-        // Theme title overrides - Higher priority
-        add_filter('single_term_title', array($this, 'modify_archive_title'), 1, 2);
-        add_filter('get_the_archive_title', array($this, 'modify_archive_title_display'), 1);
-        add_filter('document_title_parts', array($this, 'modify_document_title_parts'), 1);
-        add_filter('wp_title', array($this, 'modify_wp_title'), 1, 2);
-        
-        // Blocksy specific hooks - Try multiple approaches
-        add_filter('blocksy:hero:title', array($this, 'modify_blocksy_hero_title'), 1);
-        add_filter('blocksy:archive:render-card-layer', array($this, 'modify_blocksy_archive_card'), 1, 2);
-        add_filter('blocksy_hero_title', array($this, 'modify_blocksy_hero_title'), 1);
-        add_filter('blocksy_archive_title', array($this, 'modify_blocksy_hero_title'), 1);
-        add_filter('blocksy:archive:title', array($this, 'modify_blocksy_hero_title'), 1);
-        
-        // Blocksy page title components
-        add_filter('blocksy_page_title', array($this, 'modify_blocksy_hero_title'), 1);
-        add_filter('blocksy:page-title:title', array($this, 'modify_blocksy_hero_title'), 1);
-        
-        // Start output buffering to replace titles as last resort
-        add_action('template_redirect', array($this, 'start_title_replacement_buffer'), 1);
-        add_action('shutdown', array($this, 'end_title_replacement_buffer'), 999);
-        
-        // Yoast XML Sitemap Integration
-        add_filter('wpseo_sitemap_index', array($this, 'add_sitemap_index'));
-        add_action('init', array($this, 'register_sitemap_endpoint'));
-        add_filter('wpseo_sitemap_tc_combinations_content', array($this, 'generate_sitemap_content'));
-        
-        // Database setup hooks are registered outside the class
-        
-        // Auto-generate combinations
-        add_action('created_term', array($this, 'handle_new_term'), 10, 3);
-        add_action('delete_term', array($this, 'handle_deleted_term'), 10, 3);
-        
-        // Shortcodes for dynamic content
+        // Shortcodes
         add_shortcode('tc_field', array($this, 'shortcode_tc_field'));
         add_shortcode('tc_posts', array($this, 'shortcode_tc_posts'));
         
-        // AJAX handlers
-        add_action('wp_ajax_tc_get_combinations', array($this, 'ajax_get_combinations'));
-        add_action('wp_ajax_tc_bulk_update', array($this, 'ajax_bulk_update'));
+        // URL handling for english- prefix
+        add_filter('post_type_link', array($this, 'modify_combination_permalink'), 10, 2);
+        add_action('init', array($this, 'add_rewrite_rules'), 0);
         
-        // Blocksy integration hooks
-        add_filter('blocksy:content-blocks:display-conditions', array($this, 'add_blocksy_conditions'));
-        add_filter('blocksy:content-blocks:condition-match', array($this, 'check_blocksy_condition'), 10, 3);
+        // Activation hook
+        register_activation_hook(__FILE__, array($this, 'activate_plugin'));
+    }
+    
+    /**
+     * Register Custom Post Type
+     */
+    public function register_post_type() {
+        // Only register if not already registered by CPT UI
+        if (!post_type_exists($this->cpt_slug)) {
+            register_post_type($this->cpt_slug, array(
+                'labels' => array(
+                    'name' => 'Combinations',
+                    'singular_name' => 'Combination',
+                    'add_new' => 'Add New',
+                    'add_new_item' => 'Add New Combination',
+                    'edit_item' => 'Edit Combination',
+                    'new_item' => 'New Combination',
+                    'view_item' => 'View Combination',
+                    'search_items' => 'Search Combinations',
+                    'not_found' => 'No combinations found',
+                    'not_found_in_trash' => 'No combinations found in trash'
+                ),
+                'public' => true,
+                'publicly_queryable' => true,
+                'show_ui' => false, // We'll manage through our own interface
+                'show_in_menu' => false,
+                'show_in_rest' => true,
+                'rest_base' => 'tc_combination',
+                'has_archive' => false,
+                'rewrite' => false, // We'll handle our own rewrites
+                'supports' => array('title', 'editor', 'custom-fields', 'revisions'),
+                'capability_type' => 'page'
+            ));
+        }
+    }
+    
+    /**
+     * Register Post Meta Fields
+     */
+    public function register_post_meta() {
+        // Register meta fields for REST API visibility
+        $meta_fields = array(
+            '_tc_location_id' => 'integer',
+            '_tc_specialty_id' => 'integer',
+            '_tc_brief_intro' => 'string',
+            '_tc_full_description' => 'string',
+            '_tc_header_block_id' => 'integer',
+            '_tc_content_block_id' => 'integer',
+            '_tc_footer_block_id' => 'integer',
+            '_tc_seo_title' => 'string',
+            '_tc_seo_description' => 'string'
+        );
         
-        // REST API
-        add_action('rest_api_init', array($this, 'register_rest_routes'));
+        foreach ($meta_fields as $meta_key => $type) {
+            register_post_meta($this->cpt_slug, $meta_key, array(
+                'show_in_rest' => true,
+                'single' => true,
+                'type' => $type,
+                'auth_callback' => function() {
+                    return current_user_can('edit_posts');
+                }
+            ));
+        }
+    }
+    
+    /**
+     * Add Rewrite Rules
+     */
+    public function add_rewrite_rules() {
+        // Handle URLs like /english-dentistry-in-shibuya/
+        add_rewrite_rule(
+            '^english-([^/]+)-in-([^/]+)/?$',
+            'index.php?post_type=' . $this->cpt_slug . '&name=english-$matches[1]-in-$matches[2]',
+            'top'
+        );
+    }
+    
+    /**
+     * Modify Combination Permalink
+     */
+    public function modify_combination_permalink($permalink, $post) {
+        if ($post->post_type !== $this->cpt_slug) {
+            return $permalink;
+        }
+        
+        // Ensure URL has english- prefix
+        if (strpos($post->post_name, 'english-') !== 0) {
+            $permalink = home_url('/english-' . $post->post_name . '/');
+        } else {
+            $permalink = home_url('/' . $post->post_name . '/');
+        }
+        
+        return $permalink;
     }
     
     /**
      * Plugin Activation
      */
     public function activate_plugin() {
-        // Suppress any output during activation
-        ob_start();
-        
-        try {
-            $this->create_database_table();
-            $this->generate_all_combinations();
-            $this->add_rewrite_rules();
-            flush_rewrite_rules();
-        } catch (Exception $e) {
-            // Log error silently
-            error_log('Taxonomy Combinations Plugin Activation Error: ' . $e->getMessage());
-        }
-        
-        // Clear any output
-        ob_end_clean();
-    }
-    
-    /**
-     * Plugin Deactivation
-     */
-    public function deactivate_plugin() {
+        $this->register_post_type();
         flush_rewrite_rules();
-    }
-    
-    /**
-     * Create Database Table
-     */
-    public function create_database_table() {
-        global $wpdb;
         
-        $charset_collate = $wpdb->get_charset_collate();
-        
-        $sql = "CREATE TABLE {$this->table_name} (
-            id mediumint(9) NOT NULL AUTO_INCREMENT,
-            location_id mediumint(9) NOT NULL,
-            specialty_id mediumint(9) NOT NULL,
-            custom_slug varchar(255) DEFAULT '',
-            custom_title varchar(255) DEFAULT '',
-            custom_description text,
-            brief_intro text,
-            full_description longtext,
-            meta_title varchar(255) DEFAULT '',
-            meta_description text,
-            custom_content longtext,
-            header_content_block_id mediumint(9) DEFAULT NULL,
-            content_block_id mediumint(9) DEFAULT NULL,
-            footer_content_block_id mediumint(9) DEFAULT NULL,
-            use_global_template tinyint(1) DEFAULT 1,
-            robots_index tinyint(1) DEFAULT 1,
-            robots_follow tinyint(1) DEFAULT 1,
-            created_at datetime DEFAULT CURRENT_TIMESTAMP,
-            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (id),
-            UNIQUE KEY combination (location_id, specialty_id),
-            KEY location_id (location_id),
-            KEY specialty_id (specialty_id),
-            KEY content_block_id (content_block_id),
-            KEY custom_slug (custom_slug)
-        ) $charset_collate;";
-        
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        
-        // Suppress dbDelta output
-        ob_start();
-        dbDelta($sql);
-        ob_end_clean();
-        
-        // Add version option for future updates
-        update_option('tc_plugin_version', '2.1');
-        
-        // Check if we need to add new columns for existing installations
-        $this->maybe_add_new_columns();
-    }
-    
-    /**
-     * Maybe add new columns for existing installations
-     */
-    private function maybe_add_new_columns() {
-        global $wpdb;
-        
-        // Check if brief_intro column exists
-        $column_check = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} LIKE 'brief_intro'");
-        
-        if (empty($column_check)) {
-            // Add the new columns
-            $wpdb->query("ALTER TABLE {$this->table_name} 
-                         ADD COLUMN brief_intro TEXT AFTER custom_description,
-                         ADD COLUMN full_description LONGTEXT AFTER brief_intro");
-        }
-    }
-    
-    /**
-     * Generate all combinations on activation
-     */
-    public function generate_all_combinations() {
-        // Prevent timeout for large datasets
-        @set_time_limit(300); // 5 minutes
-        
-        $locations = get_terms(array(
-            'taxonomy' => $this->taxonomy_2,
-            'hide_empty' => false,
-            'number' => 500 // Limit to prevent memory issues
-        ));
-        
-        $specialties = get_terms(array(
-            'taxonomy' => $this->taxonomy_1,
-            'hide_empty' => false,
-            'number' => 500 // Limit to prevent memory issues
-        ));
-        
-        if (!is_wp_error($locations) && !is_wp_error($specialties)) {
-            $total = count($locations) * count($specialties);
-            
-            // Warning for large datasets
-            if ($total > 10000) {
-                error_log('Taxonomy Combinations: Generating ' . $total . ' combinations. This may take some time.');
-            }
-            
-            foreach ($locations as $location) {
-                foreach ($specialties as $specialty) {
-                    $this->create_combination_entry($location->term_id, $specialty->term_id);
-                }
-                
-                // Free up memory periodically
-                if (function_exists('wp_cache_flush')) {
-                    wp_cache_flush();
-                }
-            }
-        }
-    }
-    
-    /**
-     * Rewrite Rules
-     */
-    public function add_rewrite_rules() {
-        if ($this->url_pattern === 'combined') {
-            // Pattern: /english-[specialty]-in-[location]/
-            // The "english-" prefix is added for SEO but needs to be stripped when looking up taxonomies
-            add_rewrite_rule(
-                'english-([^/]+)-in-([^/]+)/?$',
-                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1',
-                'top'
-            );
-            
-            // With pagination
-            add_rewrite_rule(
-                'english-([^/]+)-in-([^/]+)/page/([0-9]+)/?$',
-                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1&paged=$matches[3]',
-                'top'
-            );
-            
-            // Also support URLs without "english-" prefix for backwards compatibility
-            add_rewrite_rule(
-                '([^/]+)-in-([^/]+)/?$',
-                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1',
-                'top'
-            );
-            
-            // With pagination (no prefix)
-            add_rewrite_rule(
-                '([^/]+)-in-([^/]+)/page/([0-9]+)/?$',
-                'index.php?tc_specialty=$matches[1]&tc_location=$matches[2]&tc_combo=1&paged=$matches[3]',
-                'top'
-            );
-        } else {
-            // Hierarchical pattern: /services/location/specialty/ (if url_base is set)
-            $base = !empty($this->url_base) ? $this->url_base . '/' : '';
-            
-            add_rewrite_rule(
-                $base . '([^/]+)/([^/]+)/?$',
-                'index.php?tc_location=$matches[1]&tc_specialty=$matches[2]&tc_combo=1',
-                'top'
-            );
-            
-            add_rewrite_rule(
-                $base . '([^/]+)/([^/]+)/page/([0-9]+)/?$',
-                'index.php?tc_location=$matches[1]&tc_specialty=$matches[2]&tc_combo=1&paged=$matches[3]',
-                'top'
-            );
-        }
-    }
-    
-    /**
-     * Query Variables
-     */
-    public function add_query_vars($vars) {
-        $vars[] = 'tc_location';
-        $vars[] = 'tc_specialty';
-        $vars[] = 'tc_combo';
-        $vars[] = 'tc_sitemap';
-        return $vars;
-    }
-    
-    /**
-     * Handle Sitemap Request
-     */
-    public function handle_sitemap_request() {
-        if (!get_query_var('tc_sitemap')) {
-            return;
-        }
-        
-        header('Content-Type: text/xml');
-        echo $this->generate_sitemap_content();
-        exit;
-    }
-    
-    /**
-     * Handle Virtual Page Display
-     */
-    public function handle_virtual_page() {
-        if (!get_query_var('tc_combo')) {
-            return;
-        }
-        
-        $location_slug = get_query_var('tc_location');
-        $specialty_slug = get_query_var('tc_specialty');
-        
-        // Debug output (remove this after testing)
-        if (current_user_can('manage_options') && isset($_GET['debug'])) {
-            echo '<pre style="background: #fff; padding: 20px; margin: 20px;">';
-            echo '<strong>Query Variables:</strong>' . "\n";
-            echo 'tc_combo: ' . get_query_var('tc_combo') . "\n";
-            echo 'tc_location: ' . $location_slug . "\n";
-            echo 'tc_specialty: ' . $specialty_slug . "\n";
-            echo 'URL Pattern: ' . $this->url_pattern . "\n";
-            echo "\n<strong>Expected URL format:</strong>\n";
-            echo "english-[specialty]-in-[location]" . "\n";
-            echo "\n<strong>Your URL should parse to:</strong>\n";
-            echo "Specialty slug: dentistry (or dentist)" . "\n";
-            echo "Location slug: shibuya" . "\n";
-            echo '</pre>';
-        }
-        
-        // Verify taxonomies exist
-        $location = get_term_by('slug', $location_slug, $this->taxonomy_2);
-        $specialty = get_term_by('slug', $specialty_slug, $this->taxonomy_1);
-        
-        if (!$location || !$specialty) {
-            global $wp_query;
-            $wp_query->set_404();
-            status_header(404);
-            return;
-        }
-        
-        // Set up the query
-        global $wp_query;
-        $paged = get_query_var('paged') ? get_query_var('paged') : 1;
-        
-        $args = array(
-            'post_type' => $this->post_type,
-            'posts_per_page' => get_option('posts_per_page', 10),
-            'paged' => $paged,
-            'tax_query' => array(
-                'relation' => 'AND',
-                array(
-                    'taxonomy' => $this->taxonomy_1,
-                    'field' => 'slug',
-                    'terms' => $specialty_slug,
-                ),
-                array(
-                    'taxonomy' => $this->taxonomy_2,
-                    'field' => 'slug',
-                    'terms' => $location_slug,
-                )
-            )
-        );
-        
-        $wp_query = new WP_Query($args);
-        
-        // Store combination data
-        $wp_query->tc_data = array(
-            'location' => $location,
-            'specialty' => $specialty,
-            'combination_id' => $this->get_combination_id($location->term_id, $specialty->term_id),
-            'custom_data' => $this->get_combination_data($location->term_id, $specialty->term_id),
-            'plugin_instance' => $this
-        );
-        
-        // Set is_archive to true for proper theme compatibility
-        $wp_query->is_archive = true;
-        $wp_query->is_tax = true;
-        
-        // Load template
-        $this->load_template();
-    }
-    
-    /**
-     * Load Template File
-     */
-    public function load_template() {
-        // Check for theme template first
-        $templates = array(
-            'taxonomy-combination.php',
-            'archive-' . $this->post_type . '.php',
-            'archive.php',
-            'index.php'
-        );
-        
-        // Allow themes to filter template hierarchy
-        $templates = apply_filters('tc_template_hierarchy', $templates);
-        
-        $template = locate_template($templates);
-        
-        if (!$template) {
-            // Use plugin's default template
-            $template = plugin_dir_path(__FILE__) . 'templates/taxonomy-combination.php';
-            
-            // Create default template if it doesn't exist
-            if (!file_exists($template)) {
-                $this->create_default_template();
-            }
-        }
-        
-        if ($template && file_exists($template)) {
-            include($template);
-            exit;
-        }
-    }
-    
-    /**
-     * Create Default Template
-     */
-    private function create_default_template() {
-        $template_dir = plugin_dir_path(__FILE__) . 'templates';
-        
-        if (!file_exists($template_dir)) {
-            wp_mkdir_p($template_dir);
-        }
-        
-        $template_content = '<?php
-/**
- * Default Template for Taxonomy Combination Pages
- */
-
-get_header();
-
-global $wp_query;
-$tc_data = $wp_query->tc_data;
-$location = $tc_data["location"];
-$specialty = $tc_data["specialty"];
-$custom_data = $tc_data["custom_data"];
-$plugin = $tc_data["plugin_instance"];
-
-// Render header content block if assigned
-$plugin->render_content_block("header");
-?>
-
-<div class="ct-container">
-    <div class="combination-archive">
-        <?php if (empty($custom_data->content_block_id)) : ?>
-            <!-- Default layout when no content block is assigned -->
-            <header class="page-header">
-                <h1><?php echo esc_html($custom_data->custom_title); ?></h1>
-                
-                <?php if (!empty($custom_data->custom_description)) : ?>
-                    <div class="archive-description">
-                        <?php echo wpautop(esc_html($custom_data->custom_description)); ?>
-                    </div>
-                <?php endif; ?>
-            </header>
-            
-            <?php if (!empty($custom_data->custom_content)) : ?>
-                <div class="custom-content">
-                    <?php echo wp_kses_post($custom_data->custom_content); ?>
-                </div>
-            <?php endif; ?>
-            
-            <?php if (have_posts()) : ?>
-                <div class="entries">
-                    <?php while (have_posts()) : the_post(); ?>
-                        <article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
-                            <h2><a href="<?php the_permalink(); ?>"><?php the_title(); ?></a></h2>
-                            <div class="entry-summary">
-                                <?php the_excerpt(); ?>
-                            </div>
-                        </article>
-                    <?php endwhile; ?>
-                </div>
-                
-                <?php the_posts_pagination(); ?>
-            <?php else : ?>
-                <p>No <?php echo esc_html($specialty->name); ?> found in <?php echo esc_html($location->name); ?>.</p>
-            <?php endif; ?>
-            
-        <?php else : ?>
-            <!-- Render main content block -->
-            <?php $plugin->render_content_block("main"); ?>
-        <?php endif; ?>
-    </div>
-</div>
-
-<?php
-// Render footer content block if assigned
-$plugin->render_content_block("footer");
-
-get_footer();
-';
-        
-        @file_put_contents($template_dir . '/taxonomy-combination.php', $template_content);
-    }
-    
-    /**
-     * Render Blocksy Content Block
-     */
-    public function render_content_block($position = 'main') {
-        global $wp_query;
-        
-        if (!isset($wp_query->tc_data)) {
-            return;
-        }
-        
-        $custom_data = $wp_query->tc_data['custom_data'];
-        
-        // Determine which block ID to use
-        $block_id = null;
-        switch ($position) {
-            case 'header':
-                $block_id = $custom_data->header_content_block_id;
-                break;
-            case 'main':
-                $block_id = $custom_data->content_block_id;
-                break;
-            case 'footer':
-                $block_id = $custom_data->footer_content_block_id;
-                break;
-        }
-        
-        if (empty($block_id)) {
-            return;
-        }
-        
-        // Get the content block post
-        $block = get_post($block_id);
-        if (!$block || $block->post_type !== 'ct_content_block') {
-            return;
-        }
-        
-        // Always use manual rendering to ensure our shortcodes work
-        // Get the content
-        $content = $block->post_content;
-        
-        // Process Gutenberg blocks if present
-        if (has_blocks($content)) {
-            $content = do_blocks($content);
-        }
-        
-        // Process shortcodes (including our tc_field shortcodes)
-        $content = do_shortcode($content);
-        
-        // Apply standard content filters
-        $content = apply_filters('the_content', $content);
-        
-        // Wrap in a div for styling
-        echo '<div class="tc-content-block tc-' . esc_attr($position) . '-block" data-block-id="' . esc_attr($block_id) . '">';
-        echo $content;
-        echo '</div>';
-    }
-    
-    /**
-     * Get Combination Data
-     */
-    public function get_combination_data($location_id, $specialty_id) {
-        global $wpdb;
-        
-        $data = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table_name} WHERE location_id = %d AND specialty_id = %d",
-            $location_id,
-            $specialty_id
-        ));
-        
-        if (!$data) {
-            // Try to create the entry
-            $result = $this->create_combination_entry($location_id, $specialty_id);
-            
-            // If creation failed, return empty object to prevent errors
-            if ($result === false) {
-                $data = new stdClass();
-                $data->custom_title = 'Untitled';
-                $data->custom_description = '';
-                $data->custom_content = '';
-                $data->content_block_id = null;
-                $data->header_content_block_id = null;
-                $data->footer_content_block_id = null;
-                $data->robots_index = 1;
-                $data->robots_follow = 1;
-                return $data;
-            }
-            
-            // Try to fetch again, but don't recurse
-            $data = $wpdb->get_row($wpdb->prepare(
-                "SELECT * FROM {$this->table_name} WHERE location_id = %d AND specialty_id = %d",
-                $location_id,
-                $specialty_id
-            ));
-            
-            if (!$data) {
-                // Still no data, return defaults
-                $data = new stdClass();
-                $data->custom_title = 'Untitled';
-                $data->custom_description = '';
-                $data->custom_content = '';
-                $data->content_block_id = null;
-                $data->header_content_block_id = null;
-                $data->footer_content_block_id = null;
-                $data->robots_index = 1;
-                $data->robots_follow = 1;
-            }
-        }
-        
-        return $data;
-    }
-    
-    /**
-     * Create Combination Entry
-     */
-    public function create_combination_entry($location_id, $specialty_id) {
-        global $wpdb;
-        
-        $location = get_term($location_id, $this->taxonomy_2);
-        $specialty = get_term($specialty_id, $this->taxonomy_1);
-        
-        if (!$location || !$specialty || is_wp_error($location) || is_wp_error($specialty)) {
-            return false;
-        }
-        
-        // Generate URL slug based on pattern
-        $custom_slug = $this->generate_combination_slug($specialty, $location);
-        
-        // Generate defaults with "English" prefix for better SEO
-        $default_title = sprintf('English %s in %s', $specialty->name, $location->name);
-        $default_meta_title = sprintf('English-Speaking %s in %s | Find English-Friendly Healthcare', 
-            $specialty->name, 
-            $location->name
-        );
-        
-        // More accurate descriptions focusing on English-friendly services
-        $default_meta_desc = sprintf(
-            'Find English-speaking %s in %s. Compare Japanese healthcare providers ranked by English communication ability. Read reviews and book appointments with English-friendly %s.',
-            strtolower($specialty->name),
-            $location->name,
-            strtolower($specialty->name)
-        );
-        
-        $result = $wpdb->insert(
-            $this->table_name,
-            array(
-                'location_id' => $location_id,
-                'specialty_id' => $specialty_id,
-                'custom_slug' => $custom_slug,
-                'custom_title' => $default_title,
-                'meta_title' => $default_meta_title,
-                'meta_description' => $default_meta_desc,
-                'custom_description' => '',
-                'custom_content' => '',
-                'robots_index' => 1,
-                'robots_follow' => 1
-            ),
-            array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d')
-        );
-        
-        return $result !== false ? $wpdb->insert_id : false;
-    }
-    
-    /**
-     * Generate Combination Slug
-     */
-    private function generate_combination_slug($specialty, $location) {
-        // Generate slug like: english-dentist-in-setagaya
-        $slug = sprintf('english-%s-in-%s', $specialty->slug, $location->slug);
-        
-        // Ensure uniqueness
-        global $wpdb;
-        $base_slug = $slug;
-        $counter = 1;
-        
-        while ($wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table_name} WHERE custom_slug = %s",
-            $slug
-        )) > 0) {
-            $slug = $base_slug . '-' . $counter;
-            $counter++;
-        }
-        
-        return $slug;
-    }
-    
-    /**
-     * Handle New Term Creation
-     */
-    public function handle_new_term($term_id, $tt_id, $taxonomy) {
-        if ($taxonomy === $this->taxonomy_1) {
-            // New specialty
-            $locations = get_terms(array(
-                'taxonomy' => $this->taxonomy_2,
-                'hide_empty' => false
-            ));
-            
-            if (!is_wp_error($locations)) {
-                foreach ($locations as $location) {
-                    $this->create_combination_entry($location->term_id, $term_id);
-                }
-            }
-        } elseif ($taxonomy === $this->taxonomy_2) {
-            // New location
-            $specialties = get_terms(array(
-                'taxonomy' => $this->taxonomy_1,
-                'hide_empty' => false
-            ));
-            
-            if (!is_wp_error($specialties)) {
-                foreach ($specialties as $specialty) {
-                    $this->create_combination_entry($term_id, $specialty->term_id);
-                }
-            }
-        }
-    }
-    
-    /**
-     * Handle Term Deletion
-     */
-    public function handle_deleted_term($term_id, $tt_id, $taxonomy) {
-        global $wpdb;
-        
-        if ($taxonomy === $this->taxonomy_1) {
-            $wpdb->delete($this->table_name, array('specialty_id' => $term_id), array('%d'));
-        } elseif ($taxonomy === $this->taxonomy_2) {
-            $wpdb->delete($this->table_name, array('location_id' => $term_id), array('%d'));
-        }
-    }
-    
-    /**
-     * Get Combination ID
-     */
-    public function get_combination_id($location_id, $specialty_id) {
-        return $location_id . '_' . $specialty_id;
-    }
-    
-    /**
-     * Shortcode: TC Field
-     */
-    public function shortcode_tc_field($atts) {
-        if (!get_query_var('tc_combo')) {
-            return '';
-        }
-        
-        global $wp_query;
-        if (!isset($wp_query->tc_data)) {
-            return '';
-        }
-        
-        $tc_data = $wp_query->tc_data;
-        
-        $atts = shortcode_atts(array(
-            'field' => 'title',
-            'format' => 'text'
-        ), $atts);
-        
-        $output = '';
-        
-        switch ($atts['field']) {
-            case 'title':
-                $output = isset($tc_data['custom_data']->custom_title) ? $tc_data['custom_data']->custom_title : '';
-                break;
-            case 'description':
-                $output = isset($tc_data['custom_data']->custom_description) ? $tc_data['custom_data']->custom_description : '';
-                break;
-            case 'brief_intro':
-                $output = isset($tc_data['custom_data']->brief_intro) ? $tc_data['custom_data']->brief_intro : '';
-                break;
-            case 'full_description':
-                $output = isset($tc_data['custom_data']->full_description) ? $tc_data['custom_data']->full_description : '';
-                break;
-            case 'content':
-                $output = isset($tc_data['custom_data']->custom_content) ? $tc_data['custom_data']->custom_content : '';
-                break;
-            case 'location':
-            case 'location_name':
-                $output = isset($tc_data['location']->name) ? $tc_data['location']->name : '';
-                break;
-            case 'location_slug':
-                $output = isset($tc_data['location']->slug) ? $tc_data['location']->slug : '';
-                break;
-            case 'location_description':
-                $output = isset($tc_data['location']->description) ? $tc_data['location']->description : '';
-                break;
-            case 'specialty':
-            case 'specialty_name':
-                $output = isset($tc_data['specialty']->name) ? $tc_data['specialty']->name : '';
-                break;
-            case 'specialty_slug':
-                $output = isset($tc_data['specialty']->slug) ? $tc_data['specialty']->slug : '';
-                break;
-            case 'specialty_description':
-                $output = isset($tc_data['specialty']->description) ? $tc_data['specialty']->description : '';
-                break;
-            case 'url':
-                $location_slug = isset($tc_data['location']->slug) ? $tc_data['location']->slug : '';
-                $specialty_slug = isset($tc_data['specialty']->slug) ? $tc_data['specialty']->slug : '';
-                $output = home_url($this->url_base . '/' . $location_slug . '/' . $specialty_slug . '/');
-                break;
-            case 'post_count':
-                $output = isset($wp_query->found_posts) ? $wp_query->found_posts : 0;
-                break;
-        }
-        
-        // Format output
-        if ($atts['format'] === 'html' && !empty($output)) {
-            $output = wpautop($output);
-        }
-        
-        return apply_filters('tc_field_output', $output, $atts['field'], $tc_data);
-    }
-    
-    /**
-     * Shortcode: TC Posts
-     */
-    public function shortcode_tc_posts($atts) {
-        if (!get_query_var('tc_combo')) {
-            return '';
-        }
-        
-        global $wp_query;
-        
-        $atts = shortcode_atts(array(
-            'number' => get_option('posts_per_page', 10),
-            'columns' => 1,
-            'show_excerpt' => 'yes',
-            'show_image' => 'yes',
-            'image_size' => 'thumbnail',
-            'show_date' => 'no',
-            'show_author' => 'no'
-        ), $atts);
-        
-        ob_start();
-        
-        if (have_posts()) {
-            $column_class = 'tc-posts-grid columns-' . intval($atts['columns']);
-            echo '<div class="' . esc_attr($column_class) . '">';
-            
-            while (have_posts()) {
-                the_post();
-                ?>
-                <article class="tc-post-item">
-                    <?php if ($atts['show_image'] === 'yes' && has_post_thumbnail()) : ?>
-                        <div class="tc-post-thumbnail">
-                            <a href="<?php the_permalink(); ?>">
-                                <?php the_post_thumbnail($atts['image_size']); ?>
-                            </a>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="tc-post-content">
-                        <h3 class="tc-post-title">
-                            <a href="<?php the_permalink(); ?>"><?php the_title(); ?></a>
-                        </h3>
-                        
-                        <?php if ($atts['show_date'] === 'yes' || $atts['show_author'] === 'yes') : ?>
-                            <div class="tc-post-meta">
-                                <?php if ($atts['show_date'] === 'yes') : ?>
-                                    <span class="tc-post-date"><?php echo get_the_date(); ?></span>
-                                <?php endif; ?>
-                                <?php if ($atts['show_author'] === 'yes') : ?>
-                                    <span class="tc-post-author">by <?php the_author(); ?></span>
-                                <?php endif; ?>
-                            </div>
-                        <?php endif; ?>
-                        
-                        <?php if ($atts['show_excerpt'] === 'yes') : ?>
-                            <div class="tc-post-excerpt">
-                                <?php the_excerpt(); ?>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                </article>
-                <?php
-            }
-            
-            echo '</div>';
-            
-            // Add basic CSS
-            ?>
-            <style>
-                .tc-posts-grid { display: grid; gap: 2rem; }
-                .tc-posts-grid.columns-2 { grid-template-columns: repeat(2, 1fr); }
-                .tc-posts-grid.columns-3 { grid-template-columns: repeat(3, 1fr); }
-                .tc-posts-grid.columns-4 { grid-template-columns: repeat(4, 1fr); }
-                .tc-post-item { margin-bottom: 2rem; }
-                .tc-post-thumbnail img { width: 100%; height: auto; }
-                .tc-post-meta { color: #666; font-size: 0.9em; margin: 0.5rem 0; }
-                @media (max-width: 768px) {
-                    .tc-posts-grid { grid-template-columns: 1fr !important; }
-                }
-            </style>
-            <?php
-        } else {
-            echo '<p>No posts found for this combination.</p>';
-        }
-        
-        // Reset post data
-        wp_reset_postdata();
-        
-        return ob_get_clean();
-    }
-    
-    /**
-     * Yoast SEO: Title
-     */
-    public function modify_yoast_title($title) {
-        if (!get_query_var('tc_combo')) {
-            return $title;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data']) && !empty($wp_query->tc_data['custom_data']->meta_title)) {
-            return $wp_query->tc_data['custom_data']->meta_title;
-        }
-        
-        return $title;
-    }
-    
-    /**
-     * Yoast SEO: Description
-     */
-    public function modify_yoast_description($description) {
-        if (!get_query_var('tc_combo')) {
-            return $description;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data']) && !empty($wp_query->tc_data['custom_data']->meta_description)) {
-            return $wp_query->tc_data['custom_data']->meta_description;
-        }
-        
-        return $description;
-    }
-    
-    /**
-     * Yoast SEO: Canonical URL
-     */
-    public function modify_yoast_canonical($url) {
-        if (!get_query_var('tc_combo')) {
-            return $url;
-        }
-        
-        $location_slug = get_query_var('tc_location');
-        $specialty_slug = get_query_var('tc_specialty');
-        $paged = get_query_var('paged');
-        
-        // Get the custom slug for this combination
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data']->custom_slug)) {
-            $canonical = home_url($wp_query->tc_data['custom_data']->custom_slug . '/');
-        } else {
-            // Fallback to constructed URL
-            if ($this->url_pattern === 'combined') {
-                $canonical = home_url('english-' . $specialty_slug . '-in-' . $location_slug . '/');
-            } else {
-                $base = !empty($this->url_base) ? $this->url_base . '/' : '';
-                $canonical = home_url($base . $location_slug . '/' . $specialty_slug . '/');
-            }
-        }
-        
-        if ($paged > 1) {
-            $canonical .= 'page/' . $paged . '/';
-        }
-        
-        return $canonical;
-    }
-    
-    /**
-     * Yoast SEO: Robots
-     */
-    public function modify_yoast_robots($robots) {
-        if (!get_query_var('tc_combo')) {
-            return $robots;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data'])) {
-            $data = $wp_query->tc_data['custom_data'];
-            
-            if (!$data->robots_index) {
-                $robots['index'] = 'noindex';
-            }
-            if (!$data->robots_follow) {
-                $robots['follow'] = 'nofollow';
-            }
-        }
-        
-        return $robots;
-    }
-    
-    /**
-     * Modify Archive Title for Theme Display
-     */
-    public function modify_archive_title($title, $term = null) {
-        if (!get_query_var('tc_combo')) {
-            return $title;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data'])) {
-            $data = $wp_query->tc_data['custom_data'];
-            return $data->custom_title;
-        }
-        
-        return $title;
-    }
-    
-    /**
-     * Modify Archive Title Display (for get_the_archive_title)
-     */
-    public function modify_archive_title_display($title) {
-        if (!get_query_var('tc_combo')) {
-            return $title;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data'])) {
-            $data = $wp_query->tc_data['custom_data'];
-            // Return just the title without any prefix
-            return $data->custom_title;
-        }
-        
-        return $title;
-    }
-    
-    /**
-     * Modify Document Title Parts
-     */
-    public function modify_document_title_parts($title_parts) {
-        if (!get_query_var('tc_combo')) {
-            return $title_parts;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data'])) {
-            $data = $wp_query->tc_data['custom_data'];
-            $title_parts['title'] = $data->custom_title;
-        }
-        
-        return $title_parts;
-    }
-    
-    /**
-     * Modify WP Title
-     */
-    public function modify_wp_title($title, $sep = '') {
-        if (!get_query_var('tc_combo')) {
-            return $title;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data'])) {
-            $data = $wp_query->tc_data['custom_data'];
-            return $data->custom_title;
-        }
-        
-        return $title;
-    }
-    
-    /**
-     * Modify Blocksy Hero Title
-     */
-    public function modify_blocksy_hero_title($title) {
-        if (!get_query_var('tc_combo')) {
-            return $title;
-        }
-        
-        global $wp_query;
-        if (isset($wp_query->tc_data['custom_data'])) {
-            $data = $wp_query->tc_data['custom_data'];
-            return $data->custom_title;
-        }
-        
-        return $title;
-    }
-    
-    /**
-     * Modify Blocksy Archive Card Layer
-     */
-    public function modify_blocksy_archive_card($output, $layer) {
-        if (!get_query_var('tc_combo')) {
-            return $output;
-        }
-        
-        // Check if this is the title layer
-        if (isset($layer['id']) && $layer['id'] === 'title') {
-            global $wp_query;
-            if (isset($wp_query->tc_data['custom_data'])) {
-                $data = $wp_query->tc_data['custom_data'];
-                $specialty = $wp_query->tc_data['specialty'];
-                
-                // Replace any instance of "Specialty [Name]" with our custom title
-                $pattern = '/Specialty\s+' . preg_quote($specialty->name, '/') . '/i';
-                $output = preg_replace($pattern, $data->custom_title, $output);
-                
-                // Also try to replace in the ct-title-label span specifically
-                $output = preg_replace(
-                    '/<span[^>]*class="[^"]*ct-title-label[^"]*"[^>]*>Specialty\s+' . preg_quote($specialty->name, '/') . '<\/span>/i',
-                    '<span class="ct-title-label">' . esc_html($data->custom_title) . '</span>',
-                    $output
-                );
-            }
-        }
-        
-        return $output;
-    }
-    
-    /**
-     * Start Output Buffer for Title Replacement
-     */
-    public function start_title_replacement_buffer() {
-        if (!get_query_var('tc_combo')) {
-            return;
-        }
-        
-        ob_start();
-    }
-    
-    /**
-     * End Output Buffer and Replace Titles
-     */
-    public function end_title_replacement_buffer() {
-        if (!get_query_var('tc_combo')) {
-            return;
-        }
-        
-        global $wp_query;
-        if (!isset($wp_query->tc_data['custom_data'])) {
-            return;
-        }
-        
-        $data = $wp_query->tc_data['custom_data'];
-        $specialty = $wp_query->tc_data['specialty'];
-        $location = $wp_query->tc_data['location'];
-        
-        $output = ob_get_clean();
-        
-        if ($output) {
-            // Very aggressive title replacement - multiple patterns
-            $custom_title = esc_html($data->custom_title);
-            
-            // Pattern 1: Replace "Specialty [Name]" anywhere
-            $output = preg_replace('/Specialty\s+' . preg_quote($specialty->name, '/') . '/i', $custom_title, $output);
-            
-            // Pattern 2: Replace just the specialty name in specific contexts
-            // In ct-title-label spans
-            $output = preg_replace(
-                '/<span([^>]*class="[^"]*ct-title-label[^"]*"[^>]*)>[^<]*' . preg_quote($specialty->name, '/') . '[^<]*<\/span>/i',
-                '<span$1>' . $custom_title . '</span>',
-                $output
-            );
-            
-            // Pattern 3: In any h1 tags
-            $output = preg_replace(
-                '/<h1([^>]*)>[^<]*' . preg_quote($specialty->name, '/') . '[^<]*<\/h1>/i',
-                '<h1$1>' . $custom_title . '</h1>',
-                $output
-            );
-            
-            // Pattern 4: In Blocksy's page title structure
-            $output = preg_replace(
-                '/(<div[^>]*class="[^"]*ct-page-title[^"]*"[^>]*>.*?<h1[^>]*>)[^<]*(Specialty\s+)?' . preg_quote($specialty->name, '/') . '[^<]*(<\/h1>)/is',
-                '$1' . $custom_title . '$3',
-                $output
-            );
-            
-            // Pattern 5: Replace in title attributes
-            $output = preg_replace(
-                '/title="[^"]*Specialty\s+' . preg_quote($specialty->name, '/') . '[^"]*"/i',
-                'title="' . $custom_title . '"',
-                $output
-            );
-            
-            echo $output;
-        }
+        // Check if migration is needed
+        $this->maybe_migrate_from_virtual_pages();
     }
     
     /**
@@ -1184,15 +163,6 @@ get_footer();
             array($this, 'admin_page'),
             'dashicons-networking',
             30
-        );
-        
-        add_submenu_page(
-            'taxonomy-combinations',
-            'All Combinations',
-            'All Combinations',
-            'manage_options',
-            'taxonomy-combinations',
-            array($this, 'admin_page')
         );
         
         add_submenu_page(
@@ -1215,11 +185,11 @@ get_footer();
         
         add_submenu_page(
             'taxonomy-combinations',
-            'Fix Titles',
-            'Fix Titles',
+            'Migrate Data',
+            'Migrate Data',
             'manage_options',
-            'tc-fix-titles',
-            array($this, 'fix_titles_page')
+            'tc-migrate',
+            array($this, 'migrate_page')
         );
     }
     
@@ -1227,697 +197,160 @@ get_footer();
      * Admin Scripts
      */
     public function admin_scripts($hook) {
-        if (strpos($hook, 'taxonomy-combinations') === false && strpos($hook, 'tc-') === false) {
-            return;
+        if (strpos($hook, 'taxonomy-combinations') !== false || strpos($hook, 'tc-') !== false) {
+            wp_enqueue_style('tc-admin', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '3.0');
+            wp_enqueue_script('tc-admin', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '3.0', true);
         }
-        
-        wp_enqueue_script('tc-admin', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '2.0', true);
-        wp_enqueue_style('tc-admin', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '2.0');
-        
-        wp_localize_script('tc-admin', 'tc_ajax', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('tc_ajax_nonce')
-        ));
     }
     
     /**
-     * Admin Page
+     * Main Admin Page
      */
     public function admin_page() {
-        // Handle form submission
-        if (isset($_POST['submit']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_update')) {
-            $this->update_combination_data($_POST);
-        }
-        
-        // Handle clone action
-        if (isset($_GET['clone'])) {
-            $this->clone_combination(intval($_GET['clone']));
-        }
-        
-        global $wpdb;
-        
-        // Get filter parameters
-        $filter_location = isset($_GET['filter_location']) ? intval($_GET['filter_location']) : 0;
-        $filter_specialty = isset($_GET['filter_specialty']) ? intval($_GET['filter_specialty']) : 0;
-        $search = isset($_GET['s']) ? sanitize_text_field($_GET['s']) : '';
-        
-        // Build query
-        $where_clauses = array('1=1');
-        $where_values = array();
-        
-        if ($filter_location) {
-            $where_clauses[] = 'c.location_id = %d';
-            $where_values[] = $filter_location;
-        }
-        
-        if ($filter_specialty) {
-            $where_clauses[] = 'c.specialty_id = %d';
-            $where_values[] = $filter_specialty;
-        }
-        
-        if ($search) {
-            $where_clauses[] = '(c.custom_title LIKE %s OR c.meta_title LIKE %s OR l.name LIKE %s OR s.name LIKE %s)';
-            $search_like = '%' . $wpdb->esc_like($search) . '%';
-            $where_values[] = $search_like;
-            $where_values[] = $search_like;
-            $where_values[] = $search_like;
-            $where_values[] = $search_like;
-        }
-        
-        $where_sql = implode(' AND ', $where_clauses);
-        
-        // Pagination
-        $per_page = 20;
-        $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
-        $offset = ($current_page - 1) * $per_page;
-        
-        // Get total count
-        $count_query = "SELECT COUNT(*) FROM {$this->table_name} c
-                       LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                       LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-                       WHERE $where_sql";
-        
-        if (!empty($where_values)) {
-            $count_query = $wpdb->prepare($count_query, $where_values);
-        }
-        
-        $total_items = $wpdb->get_var($count_query);
-        $total_pages = ceil($total_items / $per_page);
-        
-        // Get combinations with post count
-        $query = "SELECT c.*, l.name as location_name, l.slug as location_slug, 
-                        s.name as specialty_name, s.slug as specialty_slug,
-                        (SELECT COUNT(DISTINCT p.ID) 
-                         FROM {$wpdb->posts} p
-                         INNER JOIN {$wpdb->term_relationships} tr1 ON p.ID = tr1.object_id
-                         INNER JOIN {$wpdb->term_taxonomy} tt1 ON tr1.term_taxonomy_id = tt1.term_taxonomy_id
-                         INNER JOIN {$wpdb->term_relationships} tr2 ON p.ID = tr2.object_id
-                         INNER JOIN {$wpdb->term_taxonomy} tt2 ON tr2.term_taxonomy_id = tt2.term_taxonomy_id
-                         WHERE p.post_type = %s
-                         AND p.post_status = 'publish'
-                         AND tt1.term_id = c.location_id
-                         AND tt2.term_id = c.specialty_id
-                        ) as post_count
-                 FROM {$this->table_name} c
-                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-                 WHERE $where_sql
-                 ORDER BY l.name, s.name
-                 LIMIT %d OFFSET %d";
-        
-        // Add post_type to the beginning of values for the subquery
-        $query_values = array_merge(array($this->post_type), $where_values, array($per_page, $offset));
-        
-        if (!empty($query_values)) {
-            $query = $wpdb->prepare($query, $query_values);
-        }
-        
-        $combinations = $wpdb->get_results($query);
-        
-        // Get all locations and specialties for filters
-        $all_locations = get_terms(array('taxonomy' => $this->taxonomy_2, 'hide_empty' => false));
-        $all_specialties = get_terms(array('taxonomy' => $this->taxonomy_1, 'hide_empty' => false));
-        
-        ?>
-        <div class="wrap">
-            <h1>Taxonomy Combination Pages</h1>
-            
-            <?php if (isset($_GET['cloned'])) : ?>
-                <div class="notice notice-success is-dismissible">
-                    <p>Combination cloned successfully! You can now edit the cloned version.</p>
-                </div>
-            <?php endif; ?>
-            
-            <?php if (isset($_GET['edit'])) : 
-                $combo_id = intval($_GET['edit']);
-                $combo = $wpdb->get_row($wpdb->prepare(
-                    "SELECT c.*, l.name as location_name, l.slug as location_slug,
-                            s.name as specialty_name, s.slug as specialty_slug
-                    FROM {$this->table_name} c
-                    LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                    LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-                    WHERE c.id = %d",
-                    $combo_id
-                ));
-                
-                if ($combo) :
-                    $this->render_edit_form($combo);
-                else : ?>
-                    <div class="notice notice-error">
-                        <p>Combination not found. <a href="<?php echo admin_url('admin.php?page=taxonomy-combinations'); ?>">Go back to list</a></p>
-                    </div>
-                <?php endif;
-            else : ?>
-                
-                <!-- Filters -->
-                <div class="tablenav top">
-                    <form method="get" action="">
-                        <input type="hidden" name="page" value="taxonomy-combinations">
-                        
-                        <div class="alignleft actions">
-                            <select name="filter_location">
-                                <option value="">All Locations</option>
-                                <?php foreach ($all_locations as $location) : ?>
-                                    <option value="<?php echo $location->term_id; ?>" <?php selected($filter_location, $location->term_id); ?>>
-                                        <?php echo esc_html($location->name); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            
-                            <select name="filter_specialty">
-                                <option value="">All Specialties</option>
-                                <?php foreach ($all_specialties as $specialty) : ?>
-                                    <option value="<?php echo $specialty->term_id; ?>" <?php selected($filter_specialty, $specialty->term_id); ?>>
-                                        <?php echo esc_html($specialty->name); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            
-                            <input type="text" name="s" value="<?php echo esc_attr($search); ?>" placeholder="Search...">
-                            <input type="submit" class="button" value="Filter">
-                            
-                            <?php if ($filter_location || $filter_specialty || $search) : ?>
-                                <a href="<?php echo admin_url('admin.php?page=taxonomy-combinations'); ?>" class="button">Clear</a>
-                            <?php endif; ?>
-                        </div>
-                        
-                        <div class="alignright">
-                            <a href="<?php echo admin_url('admin.php?page=tc-bulk-edit'); ?>" class="button">Bulk Edit</a>
-                        </div>
-                    </form>
-                </div>
-                
-                <!-- Table -->
-                <table class="wp-list-table widefat fixed striped">
-                    <thead>
-                        <tr>
-                            <th style="width: 50px;">
-                                <input type="checkbox" id="cb-select-all">
-                            </th>
-                            <th>Specialty</th>
-                            <th>Location</th>
-                            <th>Title</th>
-                            <th style="width: 80px;">Providers</th>
-                            <th>Content Block</th>
-                            <th>SEO</th>
-                            <th style="width: 100px;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if ($combinations) : ?>
-                            <?php foreach ($combinations as $combo) : ?>
-                            <tr>
-                                <td>
-                                    <input type="checkbox" name="combo_ids[]" value="<?php echo $combo->id; ?>">
-                                </td>
-                                <td><?php echo esc_html($combo->specialty_name); ?></td>
-                                <td><?php echo esc_html($combo->location_name); ?></td>
-                                <td>
-                                    <strong><?php echo esc_html($combo->custom_title); ?></strong>
-                                    <div class="row-actions">
-                                        <?php 
-                                        if (!empty($combo->custom_slug)) {
-                                            $url = home_url($combo->custom_slug . '/');
-                                        } else {
-                                            $url = $this->build_combination_url(
-                                                $combo->location_slug, 
-                                                $combo->specialty_slug
-                                            );
-                                        }
-                                        $edit_url = admin_url('admin.php?page=taxonomy-combinations&edit=' . $combo->id);
-                                        $clone_url = admin_url('admin.php?page=taxonomy-combinations&clone=' . $combo->id);
-                                        ?>
-                                        <span class="edit">
-                                            <a href="<?php echo esc_url($edit_url); ?>">Edit</a> | 
-                                        </span>
-                                        <span class="view">
-                                            <a href="<?php echo esc_url($url); ?>" target="_blank">View</a> | 
-                                        </span>
-                                        <span class="clone">
-                                            <a href="<?php echo esc_url($clone_url); ?>">Clone</a>
-                                        </span>
-                                    </div>
-                                </td>
-                                <td style="text-align: center;">
-                                    <?php 
-                                    $count = isset($combo->post_count) ? intval($combo->post_count) : 0;
-                                    $color = $count > 0 ? '#2271b1' : '#d63638';
-                                    ?>
-                                    <strong style="color: <?php echo $color; ?>; font-size: 16px;">
-                                        <?php echo $count; ?>
-                                    </strong>
-                                </td>
-                                <td>
-                                    <?php if ($combo->content_block_id) : 
-                                        $block = get_post($combo->content_block_id);
-                                        if ($block) :
-                                    ?>
-                                        <span class="dashicons dashicons-yes-alt" style="color: green;"></span>
-                                        <?php echo esc_html($block->post_title); ?>
-                                    <?php else : ?>
-                                        <span class="dashicons dashicons-warning" style="color: orange;"></span>
-                                        Block #<?php echo $combo->content_block_id; ?> (deleted)
-                                    <?php endif; ?>
-                                    <?php else : ?>
-                                        <span class="dashicons dashicons-minus"></span>
-                                        Default layout
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <?php if (!empty($combo->meta_title) || !empty($combo->meta_description)) : ?>
-                                        <span class="dashicons dashicons-yes" style="color: green;"></span>
-                                        Customized
-                                    <?php else : ?>
-                                        <span class="dashicons dashicons-minus"></span>
-                                        Default
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <?php if ($combo->robots_index) : ?>
-                                        <span class="dashicons dashicons-visibility" title="Indexed" style="color: green;"></span>
-                                    <?php else : ?>
-                                        <span class="dashicons dashicons-hidden" title="Noindex" style="color: orange;"></span>
-                                    <?php endif; ?>
-                                    
-                                    <?php if ($combo->robots_follow) : ?>
-                                        <span class="dashicons dashicons-admin-links" title="Follow" style="color: green;"></span>
-                                    <?php else : ?>
-                                        <span class="dashicons dashicons-editor-unlink" title="Nofollow" style="color: orange;"></span>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        <?php else : ?>
-                            <tr>
-                                <td colspan="7">No combinations found.</td>
-                            </tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-                
-                <!-- Pagination -->
-                <?php if ($total_pages > 1) : ?>
-                <div class="tablenav bottom">
-                    <div class="tablenav-pages">
-                        <span class="displaying-num"><?php echo sprintf('%d items', $total_items); ?></span>
-                        <?php
-                        echo paginate_links(array(
-                            'base' => add_query_arg('paged', '%#%'),
-                            'format' => '',
-                            'prev_text' => '&laquo;',
-                            'next_text' => '&raquo;',
-                            'total' => $total_pages,
-                            'current' => $current_page
-                        ));
-                        ?>
-                    </div>
-                </div>
-                <?php endif; ?>
-                
-            <?php endif; ?>
-        </div>
-        <?php
-    }
-    
-    /**
-     * Render Edit Form
-     */
-    private function render_edit_form($combo) {
-        // Get available content blocks
-        $content_blocks = $this->get_content_blocks();
-        
-        ?>
-        <h2>
-            Edit: <?php echo esc_html($combo->specialty_name . ' in ' . $combo->location_name); ?>
-        </h2>
-        
-        <p>
-            <strong>URL:</strong> 
-            <?php 
-            if (!empty($combo->custom_slug)) {
-                $url = home_url($combo->custom_slug . '/');
-            } else {
-                $url = $this->build_combination_url(
-                    $combo->location_slug, 
-                    $combo->specialty_slug
-                );
-            }
-            ?>
-            <a href="<?php echo esc_url($url); ?>" target="_blank">
-                <?php echo esc_url($url); ?>
-            </a>
-        </p>
-        
-        <form method="post" action="">
-            <?php wp_nonce_field('tc_update', 'tc_nonce'); ?>
-            <input type="hidden" name="combo_id" value="<?php echo $combo->id; ?>">
-            
-            <div class="tc-edit-form">
-                <!-- Nav tabs -->
-                <h2 class="nav-tab-wrapper">
-                    <a href="#general" class="nav-tab nav-tab-active">General</a>
-                    <a href="#seo" class="nav-tab">SEO</a>
-                    <a href="#blocksy" class="nav-tab">Blocksy Blocks</a>
-                    <a href="#content" class="nav-tab">Custom Content</a>
-                </h2>
-                
-                <!-- General Tab -->
-                <div id="general" class="tab-content">
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="custom_slug">URL Slug</label></th>
-                            <td>
-                                <input type="text" id="custom_slug" name="custom_slug" 
-                                       value="<?php echo esc_attr($combo->custom_slug); ?>" class="regular-text" />
-                                <p class="description">
-                                    Custom URL slug for this combination. Leave as-is for default: 
-                                    <code>english-<?php echo $combo->specialty_slug; ?>-in-<?php echo $combo->location_slug; ?></code>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="custom_title">Page Title</label></th>
-                            <td>
-                                <input type="text" id="custom_title" name="custom_title" 
-                                       value="<?php echo esc_attr($combo->custom_title); ?>" class="regular-text" />
-                                <p class="description">The H1 title displayed on the page.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="custom_description">Short Description (Legacy)</label></th>
-                            <td>
-                                <textarea id="custom_description" name="custom_description" rows="4" class="large-text"><?php echo esc_textarea($combo->custom_description); ?></textarea>
-                                <p class="description">Legacy field - use Brief Intro and Full Description instead.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="brief_intro">Brief Intro</label></th>
-                            <td>
-                                <textarea id="brief_intro" name="brief_intro" rows="3" class="large-text"><?php echo esc_textarea($combo->brief_intro ?? ''); ?></textarea>
-                                <p class="description">Short introduction shown above the main content. Use shortcode [tc_field field="brief_intro"] in Content Blocks.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="full_description">Full Description</label></th>
-                            <td>
-                                <textarea id="full_description" name="full_description" rows="6" class="large-text"><?php echo esc_textarea($combo->full_description ?? ''); ?></textarea>
-                                <p class="description">Detailed description shown below the main content. Use shortcode [tc_field field="full_description"] in Content Blocks.</p>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-                
-                <!-- SEO Tab -->
-                <div id="seo" class="tab-content" style="display:none;">
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="meta_title">SEO Title</label></th>
-                            <td>
-                                <input type="text" id="meta_title" name="meta_title" 
-                                       value="<?php echo esc_attr($combo->meta_title); ?>" class="large-text" />
-                                <p class="description">
-                                    Title tag for search engines. 
-                                    <span id="title-length"><?php echo strlen($combo->meta_title); ?></span>/60 characters
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="meta_description">Meta Description</label></th>
-                            <td>
-                                <textarea id="meta_description" name="meta_description" rows="3" class="large-text"><?php echo esc_textarea($combo->meta_description); ?></textarea>
-                                <p class="description">
-                                    Description for search results. 
-                                    <span id="desc-length"><?php echo strlen($combo->meta_description); ?></span>/160 characters
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th>Robots Settings</th>
-                            <td>
-                                <label>
-                                    <input type="checkbox" name="robots_index" value="1" 
-                                           <?php checked($combo->robots_index, 1); ?>>
-                                    Allow search engines to index this page
-                                </label>
-                                <br>
-                                <label>
-                                    <input type="checkbox" name="robots_follow" value="1" 
-                                           <?php checked($combo->robots_follow, 1); ?>>
-                                    Allow search engines to follow links
-                                </label>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-                
-                <!-- Blocksy Tab -->
-                <div id="blocksy" class="tab-content" style="display:none;">
-                    <?php if (!empty($content_blocks)) : ?>
-                        <table class="form-table">
-                            <tr>
-                                <th><label for="header_content_block_id">Header Content Block</label></th>
-                                <td>
-                                    <select name="header_content_block_id" id="header_content_block_id">
-                                        <option value="">— None —</option>
-                                        <?php foreach ($content_blocks as $block) : ?>
-                                            <option value="<?php echo $block->ID; ?>" 
-                                                    <?php selected($combo->header_content_block_id, $block->ID); ?>>
-                                                <?php echo esc_html($block->post_title); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                    <p class="description">Content block to display before main content.</p>
-                                </td>
-                            </tr>
-                            <tr>
-                                <th><label for="content_block_id">Main Content Block</label></th>
-                                <td>
-                                    <select name="content_block_id" id="content_block_id">
-                                        <option value="">— Default Layout —</option>
-                                        <?php foreach ($content_blocks as $block) : ?>
-                                            <option value="<?php echo $block->ID; ?>" 
-                                                    <?php selected($combo->content_block_id, $block->ID); ?>>
-                                                <?php echo esc_html($block->post_title); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                    <p class="description">
-                                        Main content template. Use shortcodes: 
-                                        <code>[tc_field field="title"]</code>, 
-                                        <code>[tc_field field="location"]</code>, 
-                                        <code>[tc_field field="specialty"]</code>,
-                                        <code>[tc_posts]</code>
-                                    </p>
-                                </td>
-                            </tr>
-                            <tr>
-                                <th><label for="footer_content_block_id">Footer Content Block</label></th>
-                                <td>
-                                    <select name="footer_content_block_id" id="footer_content_block_id">
-                                        <option value="">— None —</option>
-                                        <?php foreach ($content_blocks as $block) : ?>
-                                            <option value="<?php echo $block->ID; ?>" 
-                                                    <?php selected($combo->footer_content_block_id, $block->ID); ?>>
-                                                <?php echo esc_html($block->post_title); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                    <p class="description">Content block to display after main content.</p>
-                                </td>
-                            </tr>
-                        </table>
-                    <?php else : ?>
-                        <div class="notice notice-warning">
-                            <p>No Blocksy Content Blocks found. Please create Content Blocks first.</p>
-                            <p><a href="<?php echo admin_url('edit.php?post_type=ct_content_block'); ?>" class="button">
-                                Create Content Blocks
-                            </a></p>
-                        </div>
-                    <?php endif; ?>
-                </div>
-                
-                <!-- Custom Content Tab -->
-                <div id="content" class="tab-content" style="display:none;">
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="custom_content">Custom Content</label></th>
-                            <td>
-                                <?php 
-                                wp_editor(
-                                    $combo->custom_content, 
-                                    'custom_content', 
-                                    array(
-                                        'textarea_rows' => 15,
-                                        'media_buttons' => true
-                                    )
-                                ); 
-                                ?>
-                                <p class="description">
-                                    Additional content to display on the page. 
-                                    This is shown when no Content Block is selected.
-                                </p>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-            </div>
-            
-            <p class="submit">
-                <input type="submit" name="submit" class="button-primary" value="Update Combination">
-                <a href="<?php echo admin_url('admin.php?page=taxonomy-combinations'); ?>" class="button">Cancel</a>
-            </p>
-        </form>
-        
-        <script>
-        jQuery(document).ready(function($) {
-            // Tab navigation
-            $('.nav-tab').click(function(e) {
-                e.preventDefault();
-                $('.nav-tab').removeClass('nav-tab-active');
-                $(this).addClass('nav-tab-active');
-                $('.tab-content').hide();
-                $($(this).attr('href')).show();
-            });
-            
-            // Character counters
-            $('#meta_title').on('input', function() {
-                $('#title-length').text($(this).val().length);
-            });
-            $('#meta_description').on('input', function() {
-                $('#desc-length').text($(this).val().length);
-            });
-        });
-        </script>
-        <?php
-    }
-    
-    /**
-     * Get Content Blocks
-     */
-    private function get_content_blocks() {
-        return get_posts(array(
-            'post_type' => 'ct_content_block',
+        // Get all combination posts
+        $args = array(
+            'post_type' => $this->cpt_slug,
             'posts_per_page' => -1,
             'orderby' => 'title',
             'order' => 'ASC',
-            'post_status' => 'publish'
-        ));
-    }
-    
-    /**
-     * Clone Combination
-     */
-    private function clone_combination($combo_id) {
-        if (!current_user_can('manage_options')) {
-            return;
-        }
-        
-        global $wpdb;
-        
-        // Get the original combination
-        $original = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table_name} WHERE id = %d",
-            $combo_id
-        ));
-        
-        if (!$original) {
-            return;
-        }
-        
-        // Create a new combination with same data but different title
-        $new_title = $original->custom_title . ' (Copy)';
-        $new_slug = $original->custom_slug ? $original->custom_slug . '-copy' : '';
-        
-        // Insert the cloned combination
-        $result = $wpdb->insert(
-            $this->table_name,
-            array(
-                'location_id' => $original->location_id,
-                'specialty_id' => $original->specialty_id,
-                'custom_slug' => $new_slug,
-                'custom_title' => $new_title,
-                'custom_description' => $original->custom_description,
-                'meta_title' => $original->meta_title,
-                'meta_description' => $original->meta_description,
-                'custom_content' => $original->custom_content,
-                'header_content_block_id' => $original->header_content_block_id,
-                'content_block_id' => $original->content_block_id,
-                'footer_content_block_id' => $original->footer_content_block_id,
-                'use_global_template' => $original->use_global_template,
-                'robots_index' => $original->robots_index,
-                'robots_follow' => $original->robots_follow
-            )
+            'post_status' => 'any'
         );
         
-        if ($result) {
-            $new_id = $wpdb->insert_id;
-            wp_redirect(admin_url('admin.php?page=taxonomy-combinations&edit=' . $new_id . '&cloned=1'));
-            exit;
+        // Add filters if set
+        if (!empty($_GET['location'])) {
+            $args['meta_key'] = '_tc_location_id';
+            $args['meta_value'] = intval($_GET['location']);
         }
-    }
-    
-    /**
-     * Update Combination Data
-     */
-    public function update_combination_data($data) {
-        global $wpdb;
         
-        // Sanitize and validate custom slug
-        $custom_slug = sanitize_title($data['custom_slug']);
-        if (!empty($custom_slug)) {
-            // Check for uniqueness (excluding current combination)
-            $existing = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM {$this->table_name} 
-                 WHERE custom_slug = %s AND id != %d",
-                $custom_slug,
-                intval($data['combo_id'])
-            ));
+        if (!empty($_GET['specialty'])) {
+            $args['meta_key'] = '_tc_specialty_id';
+            $args['meta_value'] = intval($_GET['specialty']);
+        }
+        
+        $combinations = get_posts($args);
+        
+        ?>
+        <div class="wrap">
+            <h1>
+                Taxonomy Combinations
+                <a href="<?php echo admin_url('admin.php?page=tc-bulk-edit'); ?>" class="page-title-action">Bulk Edit</a>
+                <a href="<?php echo admin_url('admin.php?page=tc-generate'); ?>" class="page-title-action">Generate Missing</a>
+            </h1>
             
-            if ($existing > 0) {
-                echo '<div class="notice notice-error"><p>That URL slug is already in use. Please choose another.</p></div>';
-                return;
-            }
-        }
-        
-        $update_data = array(
-            'custom_slug' => $custom_slug,
-            'custom_title' => sanitize_text_field($data['custom_title']),
-            'custom_description' => sanitize_textarea_field($data['custom_description']),
-            'brief_intro' => sanitize_textarea_field($data['brief_intro'] ?? ''),
-            'full_description' => wp_kses_post($data['full_description'] ?? ''),
-            'meta_title' => sanitize_text_field($data['meta_title']),
-            'meta_description' => sanitize_textarea_field($data['meta_description']),
-            'custom_content' => wp_kses_post($data['custom_content']),
-            'header_content_block_id' => !empty($data['header_content_block_id']) ? intval($data['header_content_block_id']) : null,
-            'content_block_id' => !empty($data['content_block_id']) ? intval($data['content_block_id']) : null,
-            'footer_content_block_id' => !empty($data['footer_content_block_id']) ? intval($data['footer_content_block_id']) : null,
-            'robots_index' => isset($data['robots_index']) ? 1 : 0,
-            'robots_follow' => isset($data['robots_follow']) ? 1 : 0
-        );
-        
-        $wpdb->update(
-            $this->table_name,
-            $update_data,
-            array('id' => intval($data['combo_id'])),
-            array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d'),
-            array('%d')
-        );
-        
-        echo '<div class="notice notice-success"><p>Combination updated successfully! <a href="' . admin_url('admin.php?page=taxonomy-combinations') . '">← Back to list</a></p></div>';
-        
-        // Flush rewrite rules to ensure new slug works
-        flush_rewrite_rules();
+            <!-- Filters -->
+            <div class="tablenav top">
+                <form method="get" action="">
+                    <input type="hidden" name="page" value="taxonomy-combinations">
+                    
+                    <select name="location">
+                        <option value="">All Locations</option>
+                        <?php
+                        $locations = get_terms(array('taxonomy' => $this->taxonomy_2, 'hide_empty' => false));
+                        foreach ($locations as $location) {
+                            $selected = (!empty($_GET['location']) && $_GET['location'] == $location->term_id) ? 'selected' : '';
+                            echo '<option value="' . $location->term_id . '" ' . $selected . '>' . esc_html($location->name) . '</option>';
+                        }
+                        ?>
+                    </select>
+                    
+                    <select name="specialty">
+                        <option value="">All Specialties</option>
+                        <?php
+                        $specialties = get_terms(array('taxonomy' => $this->taxonomy_1, 'hide_empty' => false));
+                        foreach ($specialties as $specialty) {
+                            $selected = (!empty($_GET['specialty']) && $_GET['specialty'] == $specialty->term_id) ? 'selected' : '';
+                            echo '<option value="' . $specialty->term_id . '" ' . $selected . '>' . esc_html($specialty->name) . '</option>';
+                        }
+                        ?>
+                    </select>
+                    
+                    <input type="submit" class="button" value="Filter">
+                </form>
+            </div>
+            
+            <table class="wp-list-table widefat fixed striped">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Location</th>
+                        <th>Specialty</th>
+                        <th>Provider Count</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($combinations as $post) : 
+                        $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+                        $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+                        $location = get_term($location_id, $this->taxonomy_2);
+                        $specialty = get_term($specialty_id, $this->taxonomy_1);
+                        
+                        // Get provider count
+                        $provider_query = new WP_Query(array(
+                            'post_type' => $this->post_type,
+                            'posts_per_page' => 1,
+                            'tax_query' => array(
+                                'relation' => 'AND',
+                                array(
+                                    'taxonomy' => $this->taxonomy_1,
+                                    'field' => 'term_id',
+                                    'terms' => $specialty_id
+                                ),
+                                array(
+                                    'taxonomy' => $this->taxonomy_2,
+                                    'field' => 'term_id',
+                                    'terms' => $location_id
+                                )
+                            )
+                        ));
+                        $provider_count = $provider_query->found_posts;
+                    ?>
+                        <tr>
+                            <td>
+                                <strong><?php echo esc_html($post->post_title); ?></strong>
+                                <div class="row-actions">
+                                    <span class="view">
+                                        <a href="<?php echo get_permalink($post->ID); ?>" target="_blank">View</a> |
+                                    </span>
+                                    <span class="edit">
+                                        <a href="<?php echo admin_url('post.php?post=' . $post->ID . '&action=edit'); ?>">Edit</a> |
+                                    </span>
+                                    <span class="trash">
+                                        <a href="<?php echo get_delete_post_link($post->ID); ?>">Trash</a>
+                                    </span>
+                                </div>
+                            </td>
+                            <td><?php echo $location ? esc_html($location->name) : 'N/A'; ?></td>
+                            <td><?php echo $specialty ? esc_html($specialty->name) : 'N/A'; ?></td>
+                            <td style="text-align: center;"><?php echo $provider_count; ?></td>
+                            <td><?php echo esc_html($post->post_status); ?></td>
+                            <td>
+                                <a href="<?php echo admin_url('post.php?post=' . $post->ID . '&action=edit'); ?>" class="button button-small">
+                                    Edit
+                                </a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php
     }
     
     /**
      * Bulk Edit Page
      */
     public function bulk_edit_page() {
+        if (isset($_POST['bulk_update'])) {
+            $this->process_bulk_update($_POST);
+        }
+        
         ?>
         <div class="wrap">
             <h1>Bulk Edit Combinations</h1>
             
-            <form method="post" id="bulk-edit-form">
+            <form method="post">
                 <?php wp_nonce_field('tc_bulk_edit', 'tc_nonce'); ?>
                 
                 <div class="tc-bulk-filters">
@@ -1926,20 +359,13 @@ get_footer();
                         <tr>
                             <th>Filter by Location</th>
                             <td>
-                                <select name="filter_locations[]" multiple size="5">
+                                <select name="filter_locations[]" multiple size="10">
                                     <?php
-                                    $locations = get_terms(array(
-                                        'taxonomy' => $this->taxonomy_2,
-                                        'hide_empty' => false
-                                    ));
-                                    if (!is_wp_error($locations)) {
-                                        foreach ($locations as $location) :
+                                    $locations = get_terms(array('taxonomy' => $this->taxonomy_2, 'hide_empty' => false));
+                                    foreach ($locations as $location) {
+                                        echo '<option value="' . $location->term_id . '">' . esc_html($location->name) . '</option>';
+                                    }
                                     ?>
-                                        <option value="<?php echo $location->term_id; ?>">
-                                            <?php echo esc_html($location->name); ?>
-                                        </option>
-                                    <?php endforeach;
-                                    } ?>
                                 </select>
                                 <p class="description">Hold Ctrl/Cmd to select multiple</p>
                             </td>
@@ -1947,22 +373,14 @@ get_footer();
                         <tr>
                             <th>Filter by Specialty</th>
                             <td>
-                                <select name="filter_specialties[]" multiple size="5">
+                                <select name="filter_specialties[]" multiple size="10">
                                     <?php
-                                    $specialties = get_terms(array(
-                                        'taxonomy' => $this->taxonomy_1,
-                                        'hide_empty' => false
-                                    ));
-                                    if (!is_wp_error($specialties)) {
-                                        foreach ($specialties as $specialty) :
+                                    $specialties = get_terms(array('taxonomy' => $this->taxonomy_1, 'hide_empty' => false));
+                                    foreach ($specialties as $specialty) {
+                                        echo '<option value="' . $specialty->term_id . '">' . esc_html($specialty->name) . '</option>';
+                                    }
                                     ?>
-                                        <option value="<?php echo $specialty->term_id; ?>">
-                                            <?php echo esc_html($specialty->name); ?>
-                                        </option>
-                                    <?php endforeach;
-                                    } ?>
                                 </select>
-                                <p class="description">Hold Ctrl/Cmd to select multiple</p>
                             </td>
                         </tr>
                     </table>
@@ -1974,19 +392,20 @@ get_footer();
                         <tr>
                             <th>Header Content Block</th>
                             <td>
-                                <select name="bulk_header_content_block_id">
+                                <select name="bulk_header_block_id">
                                     <option value="">— No Change —</option>
-                                    <option value="0">— Remove Block —</option>
+                                    <option value="0">— Remove —</option>
                                     <?php
-                                    $blocks = $this->get_content_blocks();
-                                    foreach ($blocks as $block) :
+                                    $blocks = get_posts(array(
+                                        'post_type' => 'ct_content_block',
+                                        'posts_per_page' => -1,
+                                        'post_status' => 'publish'
+                                    ));
+                                    foreach ($blocks as $block) {
+                                        echo '<option value="' . $block->ID . '">' . esc_html($block->post_title) . '</option>';
+                                    }
                                     ?>
-                                        <option value="<?php echo $block->ID; ?>">
-                                            <?php echo esc_html($block->post_title); ?>
-                                        </option>
-                                    <?php endforeach; ?>
                                 </select>
-                                <p class="description">Content block to display before main content on all selected pages.</p>
                             </td>
                         </tr>
                         <tr>
@@ -1994,43 +413,33 @@ get_footer();
                             <td>
                                 <select name="bulk_content_block_id">
                                     <option value="">— No Change —</option>
-                                    <option value="0">— Use Default Layout —</option>
+                                    <option value="0">— Remove —</option>
                                     <?php foreach ($blocks as $block) : ?>
-                                        <option value="<?php echo $block->ID; ?>">
-                                            <?php echo esc_html($block->post_title); ?>
-                                        </option>
+                                        <option value="<?php echo $block->ID; ?>"><?php echo esc_html($block->post_title); ?></option>
                                     <?php endforeach; ?>
                                 </select>
-                                <p class="description">Main content template for all selected pages.</p>
                             </td>
                         </tr>
                         <tr>
                             <th>Footer Content Block</th>
                             <td>
-                                <select name="bulk_footer_content_block_id">
+                                <select name="bulk_footer_block_id">
                                     <option value="">— No Change —</option>
-                                    <option value="0">— Remove Block —</option>
+                                    <option value="0">— Remove —</option>
                                     <?php foreach ($blocks as $block) : ?>
-                                        <option value="<?php echo $block->ID; ?>">
-                                            <?php echo esc_html($block->post_title); ?>
-                                        </option>
+                                        <option value="<?php echo $block->ID; ?>"><?php echo esc_html($block->post_title); ?></option>
                                     <?php endforeach; ?>
                                 </select>
-                                <p class="description">Content block to display after main content on all selected pages.</p>
                             </td>
                         </tr>
                         <tr>
-                            <th>SEO Settings</th>
+                            <th>Post Status</th>
                             <td>
-                                <select name="bulk_robots_index">
+                                <select name="bulk_post_status">
                                     <option value="">— No Change —</option>
-                                    <option value="1">Index</option>
-                                    <option value="0">NoIndex</option>
-                                </select>
-                                <select name="bulk_robots_follow">
-                                    <option value="">— No Change —</option>
-                                    <option value="1">Follow</option>
-                                    <option value="0">NoFollow</option>
+                                    <option value="publish">Published</option>
+                                    <option value="draft">Draft</option>
+                                    <option value="private">Private</option>
                                 </select>
                             </td>
                         </tr>
@@ -2043,411 +452,169 @@ get_footer();
             </form>
         </div>
         <?php
-        
-        // Handle bulk update
-        if (isset($_POST['bulk_update']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_bulk_edit')) {
-            $this->process_bulk_update($_POST);
-        }
     }
     
     /**
      * Process Bulk Update
      */
     private function process_bulk_update($data) {
-        global $wpdb;
+        if (!wp_verify_nonce($data['tc_nonce'], 'tc_bulk_edit')) {
+            return;
+        }
         
-        // Build WHERE clause
-        $where_parts = array();
-        $where_values = array();
+        // Build query args
+        $args = array(
+            'post_type' => $this->cpt_slug,
+            'posts_per_page' => -1,
+            'post_status' => 'any'
+        );
         
+        // Apply location filter
         if (!empty($data['filter_locations'])) {
-            $placeholders = implode(',', array_fill(0, count($data['filter_locations']), '%d'));
-            $where_parts[] = "location_id IN ($placeholders)";
-            $where_values = array_merge($where_values, array_map('intval', $data['filter_locations']));
+            $args['meta_query'][] = array(
+                'key' => '_tc_location_id',
+                'value' => array_map('intval', $data['filter_locations']),
+                'compare' => 'IN'
+            );
         }
         
+        // Apply specialty filter
         if (!empty($data['filter_specialties'])) {
-            $placeholders = implode(',', array_fill(0, count($data['filter_specialties']), '%d'));
-            $where_parts[] = "specialty_id IN ($placeholders)";
-            $where_values = array_merge($where_values, array_map('intval', $data['filter_specialties']));
-        }
-        
-        if (empty($where_parts)) {
-            echo '<div class="notice notice-error"><p>Please select at least one filter.</p></div>';
-            return;
-        }
-        
-        // Build UPDATE query
-        $update_parts = array();
-        $update_values = array();
-        
-        if (isset($data['bulk_header_content_block_id']) && $data['bulk_header_content_block_id'] !== '') {
-            $update_parts[] = 'header_content_block_id = %s';
-            $update_values[] = ($data['bulk_header_content_block_id'] === '0') ? null : intval($data['bulk_header_content_block_id']);
-        }
-        
-        if (isset($data['bulk_content_block_id']) && $data['bulk_content_block_id'] !== '') {
-            $update_parts[] = 'content_block_id = %s';
-            $update_values[] = ($data['bulk_content_block_id'] === '0') ? null : intval($data['bulk_content_block_id']);
-        }
-        
-        if (isset($data['bulk_footer_content_block_id']) && $data['bulk_footer_content_block_id'] !== '') {
-            $update_parts[] = 'footer_content_block_id = %s';
-            $update_values[] = ($data['bulk_footer_content_block_id'] === '0') ? null : intval($data['bulk_footer_content_block_id']);
-        }
-        
-        if (isset($data['bulk_robots_index']) && $data['bulk_robots_index'] !== '') {
-            $update_parts[] = 'robots_index = %d';
-            $update_values[] = intval($data['bulk_robots_index']);
-        }
-        
-        if (isset($data['bulk_robots_follow']) && $data['bulk_robots_follow'] !== '') {
-            $update_parts[] = 'robots_follow = %d';
-            $update_values[] = intval($data['bulk_robots_follow']);
-        }
-        
-        if (empty($update_parts)) {
-            echo '<div class="notice notice-error"><p>No changes selected.</p></div>';
-            return;
-        }
-        
-        // Execute update
-        $sql = "UPDATE {$this->table_name} SET " . implode(', ', $update_parts) . 
-               " WHERE " . implode(' AND ', $where_parts);
-        
-        $all_values = array_merge($update_values, $where_values);
-        $result = $wpdb->query($wpdb->prepare($sql, $all_values));
-        
-        if ($result !== false) {
-            echo '<div class="notice notice-success"><p>' . 
-                 sprintf('%d combinations updated successfully!', $result) . 
-                 '</p></div>';
-        } else {
-            echo '<div class="notice notice-error"><p>Error updating combinations.</p></div>';
-        }
-    }
-    
-    /**
-     * Fix Titles Page
-     */
-    public function fix_titles_page() {
-        global $wpdb;
-        
-        // Handle title fix submission
-        if (isset($_POST['fix_titles']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_fix_titles')) {
-            $combinations = $wpdb->get_results(
-                "SELECT c.*, l.name as location_name, s.name as specialty_name
-                 FROM {$this->table_name} c
-                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id"
+            $args['meta_query'][] = array(
+                'key' => '_tc_specialty_id',
+                'value' => array_map('intval', $data['filter_specialties']),
+                'compare' => 'IN'
             );
-            
-            $updated_count = 0;
-            foreach ($combinations as $combo) {
-                // Check if title doesn't start with "English"
-                if (strpos($combo->custom_title, 'English ') !== 0) {
-                    $new_title = sprintf('English %s in %s', $combo->specialty_name, $combo->location_name);
-                    $new_meta_title = sprintf('English-Speaking %s in %s | Find English-Friendly Healthcare', 
-                        $combo->specialty_name, 
-                        $combo->location_name
-                    );
-                    
-                    $wpdb->update(
-                        $this->table_name,
-                        array(
-                            'custom_title' => $new_title,
-                            'meta_title' => $new_meta_title
-                        ),
-                        array('id' => $combo->id),
-                        array('%s', '%s'),
-                        array('%d')
-                    );
-                    $updated_count++;
-                }
+        }
+        
+        if (isset($args['meta_query']) && count($args['meta_query']) > 1) {
+            $args['meta_query']['relation'] = 'AND';
+        }
+        
+        $posts = get_posts($args);
+        $updated = 0;
+        
+        foreach ($posts as $post) {
+            // Update meta fields
+            if ($data['bulk_header_block_id'] !== '') {
+                update_post_meta($post->ID, '_tc_header_block_id', $data['bulk_header_block_id'] === '0' ? '' : intval($data['bulk_header_block_id']));
+            }
+            if ($data['bulk_content_block_id'] !== '') {
+                update_post_meta($post->ID, '_tc_content_block_id', $data['bulk_content_block_id'] === '0' ? '' : intval($data['bulk_content_block_id']));
+            }
+            if ($data['bulk_footer_block_id'] !== '') {
+                update_post_meta($post->ID, '_tc_footer_block_id', $data['bulk_footer_block_id'] === '0' ? '' : intval($data['bulk_footer_block_id']));
             }
             
-            echo '<div class="notice notice-success"><p>' . sprintf('Updated %d combination titles!', $updated_count) . '</p></div>';
-        }
-        
-        // Handle description fix submission
-        if (isset($_POST['fix_descriptions']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_fix_descriptions')) {
-            $combinations = $wpdb->get_results(
-                "SELECT c.*, l.name as location_name, s.name as specialty_name
-                 FROM {$this->table_name} c
-                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id"
-            );
-            
-            $updated_count = 0;
-            foreach ($combinations as $combo) {
-                // Update if it contains "Native English" or needs improvement
-                if (strpos($combo->meta_description, 'Native English') !== false || 
-                    strpos($combo->meta_description, 'native English') !== false ||
-                    strpos($combo->meta_description, 'ranked by English') === false) {
-                    
-                    $new_meta_desc = sprintf(
-                        'Find English-speaking %s in %s. Compare Japanese healthcare providers ranked by English communication ability. Read reviews and book appointments with English-friendly %s.',
-                        strtolower($combo->specialty_name),
-                        $combo->location_name,
-                        strtolower($combo->specialty_name)
-                    );
-                    
-                    $wpdb->update(
-                        $this->table_name,
-                        array('meta_description' => $new_meta_desc),
-                        array('id' => $combo->id),
-                        array('%s'),
-                        array('%d')
-                    );
-                    $updated_count++;
-                }
+            // Update post status
+            if (!empty($data['bulk_post_status'])) {
+                wp_update_post(array(
+                    'ID' => $post->ID,
+                    'post_status' => $data['bulk_post_status']
+                ));
             }
             
-            echo '<div class="notice notice-success"><p>' . sprintf('Updated %d meta descriptions!', $updated_count) . '</p></div>';
+            $updated++;
         }
         
-        // Get combinations that need fixing
-        $needs_fixing = $wpdb->get_results(
-            "SELECT c.*, l.name as location_name, s.name as specialty_name
-             FROM {$this->table_name} c
-             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-             WHERE c.custom_title NOT LIKE 'English %'"
-        );
-        
-        // Get combinations with outdated descriptions
-        $needs_desc_fix = $wpdb->get_results(
-            "SELECT c.*, l.name as location_name, s.name as specialty_name
-             FROM {$this->table_name} c
-             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-             WHERE c.meta_description LIKE '%Native English%' 
-                OR c.meta_description LIKE '%native English%'
-                OR c.meta_description NOT LIKE '%ranked by English%'"
-        );
-        
-        ?>
-        <div class="wrap">
-            <h1>Fix Titles & SEO Descriptions</h1>
-            
-            <!-- Fix Titles Section -->
-            <div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4;">
-                <h2>Fix Page Titles</h2>
-                <?php if (count($needs_fixing) > 0) : ?>
-                    <div class="notice notice-warning inline">
-                        <p>Found <?php echo count($needs_fixing); ?> combinations with titles that need updating.</p>
-                    </div>
-                    
-                    <form method="post">
-                        <?php wp_nonce_field('tc_fix_titles', 'tc_nonce'); ?>
-                        
-                        <h3>Sample titles that will be updated:</h3>
-                        <table class="wp-list-table widefat fixed striped">
-                            <thead>
-                                <tr>
-                                    <th>Current Title</th>
-                                    <th>New Title</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php 
-                                $sample_count = 0;
-                                foreach ($needs_fixing as $combo) : 
-                                    if ($sample_count++ >= 5) break;
-                                ?>
-                                    <tr>
-                                        <td><?php echo esc_html($combo->custom_title); ?></td>
-                                        <td><strong><?php echo esc_html(sprintf('English %s in %s', $combo->specialty_name, $combo->location_name)); ?></strong></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                        
-                        <p class="submit">
-                            <input type="submit" name="fix_titles" class="button-primary" value="Fix All <?php echo count($needs_fixing); ?> Titles" 
-                                   onclick="return confirm('This will update all titles to include the English prefix. Continue?');">
-                        </p>
-                    </form>
-                <?php else : ?>
-                    <div class="notice notice-success inline">
-                        <p>✓ All combination titles are properly formatted!</p>
-                    </div>
-                <?php endif; ?>
-            </div>
-            
-            <!-- Fix Descriptions Section -->
-            <div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4;">
-                <h2>Fix SEO Meta Descriptions</h2>
-                <?php if (count($needs_desc_fix) > 0) : ?>
-                    <div class="notice notice-warning inline">
-                        <p>Found <?php echo count($needs_desc_fix); ?> combinations with outdated SEO descriptions.</p>
-                    </div>
-                    
-                    <form method="post">
-                        <?php wp_nonce_field('tc_fix_descriptions', 'tc_nonce'); ?>
-                        
-                        <h3>New Description Format:</h3>
-                        <div style="background: #f0f0f1; padding: 15px; margin: 15px 0; border-left: 4px solid #2271b1;">
-                            <p><strong>Old (Inaccurate):</strong><br>
-                            "Find the best English-speaking [specialty] in [location]. <span style="color: red;">Native English</span> [specialty] services with experienced professionals."</p>
-                            
-                            <p><strong>New (Accurate):</strong><br>
-                            "Find English-speaking [specialty] in [location]. Compare Japanese healthcare providers <span style="color: green;">ranked by English communication ability</span>. Read reviews and book appointments with English-friendly [specialty]."</p>
-                        </div>
-                        
-                        <p class="submit">
-                            <input type="submit" name="fix_descriptions" class="button-primary" value="Fix All <?php echo count($needs_desc_fix); ?> Descriptions" 
-                                   onclick="return confirm('This will update all meta descriptions to be more accurate. Continue?');">
-                        </p>
-                    </form>
-                <?php else : ?>
-                    <div class="notice notice-success inline">
-                        <p>✓ All meta descriptions are accurate and optimized!</p>
-                    </div>
-                <?php endif; ?>
-        </div>
-        <?php
+        echo '<div class="notice notice-success"><p>Updated ' . $updated . ' combinations!</p></div>';
     }
     
     /**
      * Settings Page
      */
     public function settings_page() {
-        // Handle API key generation
-        if (isset($_POST['generate_api_key']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_settings')) {
-            $api_key = wp_generate_password(32, false);
-            update_option('tc_api_key', $api_key);
-            echo '<div class="notice notice-success"><p>New API key generated successfully!</p></div>';
+        if (isset($_POST['submit'])) {
+            update_option('tc_default_header_block', intval($_POST['default_header_block']));
+            update_option('tc_default_content_block', intval($_POST['default_content_block']));
+            update_option('tc_default_footer_block', intval($_POST['default_footer_block']));
+            update_option('tc_auto_generate', isset($_POST['auto_generate']) ? 1 : 0);
+            update_option('tc_default_status', sanitize_text_field($_POST['default_status']));
+            
+            echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
-        
-        // Handle API key deletion
-        if (isset($_POST['delete_api_key']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_settings')) {
-            delete_option('tc_api_key');
-            echo '<div class="notice notice-success"><p>API key deleted successfully!</p></div>';
-        }
-        
-        // Handle settings save
-        if (isset($_POST['submit']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_settings')) {
-            update_option('tc_url_base', sanitize_title($_POST['url_base']));
-            echo '<div class="notice notice-success"><p>Settings saved! Please visit Settings > Permalinks to refresh rewrite rules.</p></div>';
-        }
-        
-        $current_api_key = get_option('tc_api_key', '');
         
         ?>
         <div class="wrap">
             <h1>Taxonomy Combination Settings</h1>
             
-            <form method="post" action="">
+            <form method="post">
                 <?php wp_nonce_field('tc_settings', 'tc_nonce'); ?>
                 
-                <h2>General Settings</h2>
+                <h2>Default Content Blocks for New Combinations</h2>
                 <table class="form-table">
                     <tr>
-                        <th><label for="url_base">URL Base</label></th>
+                        <th>Default Header Block</th>
                         <td>
-                            <input type="text" id="url_base" name="url_base" 
-                                   value="<?php echo esc_attr(get_option('tc_url_base', $this->url_base)); ?>" />
-                            <p class="description">
-                                Base URL for combination pages. 
-                                Example: <?php echo home_url('/[base]/location/specialty/'); ?>
-                            </p>
+                            <select name="default_header_block">
+                                <option value="">— None —</option>
+                                <?php
+                                $blocks = get_posts(array('post_type' => 'ct_content_block', 'posts_per_page' => -1, 'post_status' => 'publish'));
+                                $current = get_option('tc_default_header_block');
+                                foreach ($blocks as $block) {
+                                    $selected = ($current == $block->ID) ? 'selected' : '';
+                                    echo '<option value="' . $block->ID . '" ' . $selected . '>' . esc_html($block->post_title) . '</option>';
+                                }
+                                ?>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Default Main Content Block</th>
+                        <td>
+                            <select name="default_content_block">
+                                <option value="">— None —</option>
+                                <?php
+                                $current = get_option('tc_default_content_block');
+                                foreach ($blocks as $block) {
+                                    $selected = ($current == $block->ID) ? 'selected' : '';
+                                    echo '<option value="' . $block->ID . '" ' . $selected . '>' . esc_html($block->post_title) . '</option>';
+                                }
+                                ?>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Default Footer Block</th>
+                        <td>
+                            <select name="default_footer_block">
+                                <option value="">— None —</option>
+                                <?php
+                                $current = get_option('tc_default_footer_block');
+                                foreach ($blocks as $block) {
+                                    $selected = ($current == $block->ID) ? 'selected' : '';
+                                    echo '<option value="' . $block->ID . '" ' . $selected . '>' . esc_html($block->post_title) . '</option>';
+                                }
+                                ?>
+                            </select>
                         </td>
                     </tr>
                 </table>
                 
-                <h2>REST API Settings</h2>
+                <h2>Auto-Generation Settings</h2>
                 <table class="form-table">
                     <tr>
-                        <th><label>API Key</label></th>
+                        <th>Auto-Generate Combinations</th>
                         <td>
-                            <?php if ($current_api_key): ?>
-                                <input type="text" value="<?php echo esc_attr($current_api_key); ?>" 
-                                       readonly style="width: 350px; font-family: monospace;" />
-                                <button type="submit" name="delete_api_key" class="button button-secondary" 
-                                        onclick="return confirm('Are you sure you want to delete the API key?');">
-                                    Delete Key
-                                </button>
-                                <p class="description">
-                                    Use this key in the <code>X-TC-API-Key</code> header for REST API authentication.
-                                </p>
-                            <?php else: ?>
-                                <button type="submit" name="generate_api_key" class="button button-primary">
-                                    Generate API Key
-                                </button>
-                                <p class="description">
-                                    Generate an API key to enable REST API access to combination data.
-                                </p>
-                            <?php endif; ?>
+                            <label>
+                                <input type="checkbox" name="auto_generate" value="1" <?php checked(get_option('tc_auto_generate', 1)); ?>>
+                                Automatically create combination pages when new terms are added
+                            </label>
                         </td>
                     </tr>
                     <tr>
-                        <th><label>API Endpoints</label></th>
+                        <th>Default Post Status</th>
                         <td>
-                            <code><?php echo rest_url('tc/v1/combinations'); ?></code>
-                            <p class="description">
-                                Base endpoint for REST API operations. See documentation below for available endpoints.
-                            </p>
+                            <select name="default_status">
+                                <?php
+                                $current = get_option('tc_default_status', 'publish');
+                                ?>
+                                <option value="publish" <?php selected($current, 'publish'); ?>>Published</option>
+                                <option value="draft" <?php selected($current, 'draft'); ?>>Draft</option>
+                                <option value="private" <?php selected($current, 'private'); ?>>Private</option>
+                            </select>
                         </td>
                     </tr>
-                </table>
-                
-                <h2>Available Shortcodes</h2>
-                <table class="widefat">
-                    <thead>
-                        <tr>
-                            <th>Shortcode</th>
-                            <th>Description</th>
-                            <th>Example</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>[tc_field field="title"]</code></td>
-                            <td>Display combination title</td>
-                            <td>Cardiology in New York</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="location"]</code></td>
-                            <td>Display location name</td>
-                            <td>New York</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="specialty"]</code></td>
-                            <td>Display specialty name</td>
-                            <td>Cardiology</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="description"]</code></td>
-                            <td>Display custom description (legacy)</td>
-                            <td>Custom description text...</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="brief_intro"]</code></td>
-                            <td>Display brief introduction</td>
-                            <td>Short intro text for above content...</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="full_description"]</code></td>
-                            <td>Display full description</td>
-                            <td>Detailed description for below content...</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="url"]</code></td>
-                            <td>Display page URL</td>
-                            <td><?php echo home_url('/services/location/specialty/'); ?></td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_field field="post_count"]</code></td>
-                            <td>Number of posts found</td>
-                            <td>15</td>
-                        </tr>
-                        <tr>
-                            <td><code>[tc_posts number="6" columns="3"]</code></td>
-                            <td>Display posts grid</td>
-                            <td>Grid of posts</td>
-                        </tr>
-                    </tbody>
                 </table>
                 
                 <p class="submit">
@@ -2455,788 +622,414 @@ get_footer();
                 </p>
             </form>
             
-            <hr style="margin: 30px 0;">
+            <hr>
             
-            <h2>REST API Documentation</h2>
-            <div style="background: #fff; border: 1px solid #ccd0d4; padding: 20px; margin-top: 20px;">
-                <h3>Authentication</h3>
-                <p>All API requests require authentication using the API key in the request header:</p>
-                <pre style="background: #f1f1f1; padding: 10px;">X-TC-API-Key: YOUR_API_KEY</pre>
-                
-                <h3>Available Endpoints</h3>
-                
-                <h4>Get All Combinations</h4>
-                <pre style="background: #f1f1f1; padding: 10px;">GET <?php echo rest_url('tc/v1/combinations'); ?></pre>
-                
-                <h4>Get Single Combination by ID</h4>
-                <pre style="background: #f1f1f1; padding: 10px;">GET <?php echo rest_url('tc/v1/combinations/{id}'); ?></pre>
-                
-                <h4>Get Combination by Slug</h4>
-                <pre style="background: #f1f1f1; padding: 10px;">GET <?php echo rest_url('tc/v1/combinations/slug/{slug}'); ?></pre>
-                
-                <h4>Update Combination</h4>
-                <pre style="background: #f1f1f1; padding: 10px;">PUT <?php echo rest_url('tc/v1/combinations/{id}'); ?>
-
-Body (JSON):
-{
-    "custom_title": "English Dentistry in Shibuya",
-    "custom_description": "Find the best English-speaking dentists...",
-    "meta_title": "English Dentists in Shibuya | Healthcare",
-    "meta_description": "Top-rated English-speaking dentists...",
-    "content_block_id": 123,
-    "robots_index": true,
-    "robots_follow": true
-}</pre>
-                
-                <h4>Bulk Update Combinations</h4>
-                <pre style="background: #f1f1f1; padding: 10px;">POST <?php echo rest_url('tc/v1/combinations/bulk'); ?>
-
-Body (JSON):
-{
-    "combinations": [
-        {
-            "id": 1,
-            "custom_title": "New Title",
-            "meta_description": "New description"
-        },
-        {
-            "slug": "english-dentistry-in-tokyo",
-            "custom_description": "Updated description"
-        }
-    ]
-}</pre>
-                
-                <h3>Example Usage (JavaScript)</h3>
-                <pre style="background: #f1f1f1; padding: 10px;">fetch('<?php echo rest_url('tc/v1/combinations/1'); ?>', {
-    method: 'PUT',
-    headers: {
-        'Content-Type': 'application/json',
-        'X-TC-API-Key': 'YOUR_API_KEY'
-    },
-    body: JSON.stringify({
-        custom_title: 'Updated Title',
-        meta_description: 'Updated SEO description'
-    })
-})
-.then(response => response.json())
-.then(data => console.log(data));</pre>
-                
-                <h3>Response Format</h3>
-                <p>All successful responses return JSON with the following structure:</p>
-                <pre style="background: #f1f1f1; padding: 10px;">{
-    "success": true,
-    "data": {
-        "id": 1,
-        "location_id": 5,
-        "specialty_id": 10,
-        "custom_title": "English Dentistry in Shibuya",
-        "custom_slug": "english-dentistry-in-shibuya",
-        "meta_description": "Find English-speaking dentists...",
-        // ... other fields
-    }
-}</pre>
-            </div>
+            <h2>Generate Missing Combinations</h2>
+            <p>Click the button below to generate any missing combination pages.</p>
+            <form method="post" action="<?php echo admin_url('admin.php?page=tc-migrate&action=generate'); ?>">
+                <?php wp_nonce_field('tc_generate', 'tc_nonce'); ?>
+                <p class="submit">
+                    <input type="submit" name="generate" class="button-secondary" value="Generate Missing Combinations">
+                </p>
+            </form>
         </div>
         <?php
     }
     
     /**
-     * AJAX: Get Combinations
+     * Migration Page
      */
-    public function ajax_get_combinations() {
-        check_ajax_referer('tc_ajax_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error('Permission denied');
+    public function migrate_page() {
+        // Handle generation request
+        if (isset($_GET['action']) && $_GET['action'] === 'generate') {
+            $this->generate_all_combinations();
             return;
         }
         
-        global $wpdb;
-        
-        $location_id = isset($_POST['location_id']) ? intval($_POST['location_id']) : 0;
-        $specialty_id = isset($_POST['specialty_id']) ? intval($_POST['specialty_id']) : 0;
-        
-        $where = array();
-        $values = array();
-        
-        if ($location_id) {
-            $where[] = 'location_id = %d';
-            $values[] = $location_id;
+        // Handle migration request
+        if (isset($_POST['migrate'])) {
+            $this->migrate_from_database();
+            return;
         }
         
-        if ($specialty_id) {
-            $where[] = 'specialty_id = %d';
-            $values[] = $specialty_id;
-        }
-        
-        $where_sql = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
-        
-        $query = "SELECT c.*, l.name as location_name, s.name as specialty_name
-                 FROM {$this->table_name} c
-                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-                 $where_sql";
-        
-        if (!empty($values)) {
-            $query = $wpdb->prepare($query, $values);
-        }
-        
-        $results = $wpdb->get_results($query);
-        
-        wp_send_json_success($results);
-    }
-    
-    /**
-     * AJAX: Bulk Update
-     */
-    public function ajax_bulk_update() {
-        check_ajax_referer('tc_ajax_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error('Permission denied');
-        }
-        
-        $combo_ids = isset($_POST['combo_ids']) ? array_map('intval', $_POST['combo_ids']) : array();
-        $action = isset($_POST['bulk_action']) ? sanitize_text_field($_POST['bulk_action']) : '';
-        $value = isset($_POST['bulk_value']) ? sanitize_text_field($_POST['bulk_value']) : '';
-        
-        if (empty($combo_ids) || empty($action)) {
-            wp_send_json_error('Invalid parameters');
-        }
-        
-        global $wpdb;
-        
-        $update_data = array();
-        $format = array();
-        
-        switch ($action) {
-            case 'content_block':
-                $update_data['content_block_id'] = intval($value);
-                $format[] = '%d';
-                break;
-            case 'robots_index':
-                $update_data['robots_index'] = intval($value);
-                $format[] = '%d';
-                break;
-            case 'robots_follow':
-                $update_data['robots_follow'] = intval($value);
-                $format[] = '%d';
-                break;
-            default:
-                wp_send_json_error('Invalid action');
-        }
-        
-        $success_count = 0;
-        foreach ($combo_ids as $combo_id) {
-            $result = $wpdb->update(
-                $this->table_name,
-                $update_data,
-                array('id' => $combo_id),
-                $format,
-                array('%d')
-            );
+        ?>
+        <div class="wrap">
+            <h1>Data Migration</h1>
             
-            if ($result !== false) {
-                $success_count++;
-            }
-        }
-        
-        wp_send_json_success(array(
-            'message' => sprintf('%d combinations updated', $success_count)
-        ));
-    }
-    
-    /**
-     * Blocksy Integration: Add Display Conditions
-     */
-    public function add_blocksy_conditions($conditions) {
-        if (!get_query_var('tc_combo')) {
-            return $conditions;
-        }
-        
-        $conditions[] = array(
-            'type' => 'taxonomy_combination',
-            'location' => get_query_var('tc_location'),
-            'specialty' => get_query_var('tc_specialty')
-        );
-        
-        return $conditions;
-    }
-    
-    /**
-     * Blocksy Integration: Check Condition Match
-     */
-    public function check_blocksy_condition($match, $condition, $block_id) {
-        if (!isset($condition['type']) || $condition['type'] !== 'taxonomy_combination') {
-            return $match;
-        }
-        
-        $current_location = get_query_var('tc_location');
-        $current_specialty = get_query_var('tc_specialty');
-        
-        if (!$current_location || !$current_specialty) {
-            return false;
-        }
-        
-        // Check if this block is assigned to the current combination
-        global $wpdb;
-        
-        $location = get_term_by('slug', $current_location, $this->taxonomy_2);
-        $specialty = get_term_by('slug', $current_specialty, $this->taxonomy_1);
-        
-        if (!$location || !$specialty) {
-            return false;
-        }
-        
-        $combo = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table_name} 
-             WHERE location_id = %d AND specialty_id = %d",
-            $location->term_id,
-            $specialty->term_id
-        ));
-        
-        if ($combo) {
-            return ($combo->content_block_id == $block_id || 
-                    $combo->header_content_block_id == $block_id ||
-                    $combo->footer_content_block_id == $block_id);
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Sitemap: Add to Yoast Sitemap Index
-     */
-    public function add_sitemap_index($sitemap_index) {
-        global $wpdb;
-        
-        // Get count of indexed combinations
-        $count = $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$this->table_name} WHERE robots_index = 1"
-        );
-        
-        if ($count > 0) {
-            $sitemap_entry = '<sitemap>' . "\n";
-            $sitemap_entry .= '<loc>' . home_url('tc-combinations-sitemap.xml') . '</loc>' . "\n";
-            $sitemap_entry .= '<lastmod>' . date('c') . '</lastmod>' . "\n";
-            $sitemap_entry .= '</sitemap>' . "\n";
+            <?php
+            // Check if old table exists
+            global $wpdb;
+            $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$this->table_name}'") === $this->table_name;
             
-            $sitemap_index = str_replace('</sitemapindex>', $sitemap_entry . '</sitemapindex>', $sitemap_index);
-        }
-        
-        return $sitemap_index;
+            if ($table_exists) :
+                $count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+            ?>
+                <div class="notice notice-info">
+                    <p>Found <?php echo $count; ?> combinations in the old database table.</p>
+                </div>
+                
+                <form method="post">
+                    <?php wp_nonce_field('tc_migrate', 'tc_nonce'); ?>
+                    <p>This will migrate all data from the old virtual pages system to real WordPress posts.</p>
+                    <p class="submit">
+                        <input type="submit" name="migrate" class="button-primary" value="Start Migration">
+                    </p>
+                </form>
+            <?php else : ?>
+                <div class="notice notice-success">
+                    <p>No old data found. System is using the new post-based structure.</p>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php
     }
     
     /**
-     * Sitemap: Register Custom Endpoint
+     * Migrate from Database Table to Posts
      */
-    public function register_sitemap_endpoint() {
-        add_rewrite_rule('tc-combinations-sitemap\.xml$', 'index.php?tc_sitemap=1', 'top');
-    }
-    
-    /**
-     * Generate Sitemap Content
-     */
-    public function generate_sitemap_content() {
+    private function migrate_from_database() {
         global $wpdb;
         
-        $combinations = $wpdb->get_results(
-            "SELECT c.*, l.name as location_name, l.slug as location_slug, 
-                    s.name as specialty_name, s.slug as specialty_slug
-             FROM {$this->table_name} c
-             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-             WHERE c.robots_index = 1"
-        );
-        
-        if (empty($combinations)) {
-            return '';
+        if (!wp_verify_nonce($_POST['tc_nonce'], 'tc_migrate')) {
+            return;
         }
         
-        $sitemap = '<?xml version="1.0" encoding="UTF-8"?>';
-        $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
+        $rows = $wpdb->get_results("SELECT * FROM {$this->table_name}");
+        $migrated = 0;
+        $skipped = 0;
         
-        foreach ($combinations as $combo) {
-            $url = !empty($combo->custom_slug) 
-                ? home_url($combo->custom_slug . '/') 
-                : $this->build_combination_url($combo->location_slug, $combo->specialty_slug);
+        foreach ($rows as $row) {
+            // Check if combination already exists as post
+            $existing = get_posts(array(
+                'post_type' => $this->cpt_slug,
+                'meta_query' => array(
+                    'relation' => 'AND',
+                    array(
+                        'key' => '_tc_location_id',
+                        'value' => $row->location_id
+                    ),
+                    array(
+                        'key' => '_tc_specialty_id',
+                        'value' => $row->specialty_id
+                    )
+                ),
+                'posts_per_page' => 1
+            ));
             
-            $sitemap .= '<url>';
-            $sitemap .= '<loc>' . esc_url($url) . '</loc>';
-            $sitemap .= '<lastmod>' . date('c', strtotime($combo->updated_at)) . '</lastmod>';
-            $sitemap .= '<changefreq>weekly</changefreq>';
-            $sitemap .= '<priority>0.8</priority>';
-            $sitemap .= '</url>';
-        }
-        
-        $sitemap .= '</urlset>';
-        
-        return $sitemap;
-    }
-    
-    /**
-     * Build Combination URL
-     */
-    private function build_combination_url($location_slug, $specialty_slug) {
-        if ($this->url_pattern === 'combined') {
-            return home_url('english-' . $specialty_slug . '-in-' . $location_slug . '/');
-        } else {
-            $base = !empty($this->url_base) ? $this->url_base . '/' : '';
-            return home_url($base . $location_slug . '/' . $specialty_slug . '/');
-        }
-    }
-    
-    /**
-     * Register REST API Routes
-     */
-    public function register_rest_routes() {
-        $namespace = 'tc/v1';
-        
-        // Get all combinations
-        register_rest_route($namespace, '/combinations', array(
-            'methods' => 'GET',
-            'callback' => array($this, 'rest_get_combinations'),
-            'permission_callback' => '__return_true',
-            'args' => array(
-                'location_id' => array(
-                    'type' => 'integer',
-                    'sanitize_callback' => 'absint',
-                ),
-                'specialty_id' => array(
-                    'type' => 'integer',
-                    'sanitize_callback' => 'absint',
-                ),
-                'location_slug' => array(
-                    'type' => 'string',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'specialty_slug' => array(
-                    'type' => 'string',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-            ),
-        ));
-        
-        // Get single combination by ID
-        register_rest_route($namespace, '/combinations/(?P<id>\d+)', array(
-            'methods' => 'GET',
-            'callback' => array($this, 'rest_get_combination'),
-            'permission_callback' => '__return_true',
-        ));
-        
-        // Update combination by ID
-        register_rest_route($namespace, '/combinations/(?P<id>\d+)', array(
-            'methods' => array('POST', 'PUT', 'PATCH'),
-            'callback' => array($this, 'rest_update_combination'),
-            'permission_callback' => array($this, 'rest_check_permissions'),
-            'args' => $this->get_rest_update_args(),
-        ));
-        
-        // Get combination by slugs
-        register_rest_route($namespace, '/combinations/by-slug/(?P<location>[a-z0-9-]+)/(?P<specialty>[a-z0-9-]+)', array(
-            'methods' => 'GET',
-            'callback' => array($this, 'rest_get_combination_by_slug'),
-            'permission_callback' => '__return_true',
-        ));
-        
-        // Update combination by slugs
-        register_rest_route($namespace, '/combinations/by-slug/(?P<location>[a-z0-9-]+)/(?P<specialty>[a-z0-9-]+)', array(
-            'methods' => array('POST', 'PUT', 'PATCH'),
-            'callback' => array($this, 'rest_update_combination_by_slug'),
-            'permission_callback' => array($this, 'rest_check_permissions'),
-            'args' => $this->get_rest_update_args(),
-        ));
-        
-        // Bulk update combinations
-        register_rest_route($namespace, '/combinations/bulk', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'rest_bulk_update_combinations'),
-            'permission_callback' => array($this, 'rest_check_permissions'),
-        ));
-    }
-    
-    /**
-     * REST API: Check Permissions
-     */
-    public function rest_check_permissions($request) {
-        // Check for API key in header
-        $api_key = $request->get_header('X-TC-API-Key');
-        $stored_key = get_option('tc_api_key');
-        
-        if ($api_key && $stored_key && $api_key === $stored_key) {
-            return true;
-        }
-        
-        // Fall back to WordPress authentication
-        return current_user_can('edit_posts');
-    }
-    
-    /**
-     * REST API: Get Update Arguments
-     */
-    private function get_rest_update_args() {
-        return array(
-            'custom_title' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'sanitize_text_field',
-            ),
-            'meta_title' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'sanitize_text_field',
-            ),
-            'meta_description' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'sanitize_textarea_field',
-            ),
-            'custom_description' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'sanitize_textarea_field',
-            ),
-            'brief_intro' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'sanitize_textarea_field',
-            ),
-            'full_description' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'wp_kses_post',
-            ),
-            'custom_content' => array(
-                'type' => 'string',
-                'sanitize_callback' => 'wp_kses_post',
-            ),
-            'robots_index' => array(
-                'type' => 'boolean',
-            ),
-            'robots_follow' => array(
-                'type' => 'boolean',
-            ),
-        );
-    }
-    
-    /**
-     * REST API: Get All Combinations
-     */
-    public function rest_get_combinations($request) {
-        global $wpdb;
-        
-        $where_clauses = array('1=1');
-        $where_values = array();
-        
-        if ($request->get_param('location_id')) {
-            $where_clauses[] = 'c.location_id = %d';
-            $where_values[] = $request->get_param('location_id');
-        }
-        
-        if ($request->get_param('specialty_id')) {
-            $where_clauses[] = 'c.specialty_id = %d';
-            $where_values[] = $request->get_param('specialty_id');
-        }
-        
-        if ($request->get_param('location_slug')) {
-            $where_clauses[] = 'l.slug = %s';
-            $where_values[] = $request->get_param('location_slug');
-        }
-        
-        if ($request->get_param('specialty_slug')) {
-            $where_clauses[] = 's.slug = %s';
-            $where_values[] = $request->get_param('specialty_slug');
-        }
-        
-        $where_sql = implode(' AND ', $where_clauses);
-        
-        $query = "SELECT c.*, l.name as location_name, l.slug as location_slug,
-                        s.name as specialty_name, s.slug as specialty_slug
-                 FROM {$this->table_name} c
-                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-                 WHERE $where_sql
-                 ORDER BY l.name, s.name";
-        
-        if (!empty($where_values)) {
-            $query = $wpdb->prepare($query, $where_values);
-        }
-        
-        $results = $wpdb->get_results($query);
-        
-        // Add URLs to results
-        foreach ($results as &$result) {
-            $result->url = !empty($result->custom_slug) 
-                ? home_url($result->custom_slug . '/') 
-                : $this->build_combination_url($result->location_slug, $result->specialty_slug);
-        }
-        
-        return rest_ensure_response($results);
-    }
-    
-    /**
-     * REST API: Get Single Combination
-     */
-    public function rest_get_combination($request) {
-        global $wpdb;
-        
-        $id = $request->get_param('id');
-        
-        $combo = $wpdb->get_row($wpdb->prepare(
-            "SELECT c.*, l.name as location_name, l.slug as location_slug,
-                    s.name as specialty_name, s.slug as specialty_slug
-             FROM {$this->table_name} c
-             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-             WHERE c.id = %d",
-            $id
-        ));
-        
-        if (!$combo) {
-            return new WP_Error('not_found', 'Combination not found', array('status' => 404));
-        }
-        
-        $combo->url = !empty($combo->custom_slug) 
-            ? home_url($combo->custom_slug . '/') 
-            : $this->build_combination_url($combo->location_slug, $combo->specialty_slug);
-        
-        return rest_ensure_response($combo);
-    }
-    
-    /**
-     * REST API: Get Combination by Slugs
-     */
-    public function rest_get_combination_by_slug($request) {
-        global $wpdb;
-        
-        $location_slug = $request->get_param('location');
-        $specialty_slug = $request->get_param('specialty');
-        
-        // Get term IDs from slugs
-        $location = get_term_by('slug', $location_slug, $this->taxonomy_2);
-        $specialty = get_term_by('slug', $specialty_slug, $this->taxonomy_1);
-        
-        if (!$location || !$specialty) {
-            return new WP_Error('not_found', 'Location or specialty not found', array('status' => 404));
-        }
-        
-        $combo = $wpdb->get_row($wpdb->prepare(
-            "SELECT c.*, l.name as location_name, l.slug as location_slug,
-                    s.name as specialty_name, s.slug as specialty_slug
-             FROM {$this->table_name} c
-             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
-             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
-             WHERE c.location_id = %d AND c.specialty_id = %d",
-            $location->term_id,
-            $specialty->term_id
-        ));
-        
-        if (!$combo) {
-            // Create if doesn't exist
-            $this->create_combination_entry($location->term_id, $specialty->term_id);
-            $combo = $this->get_combination_data($location->term_id, $specialty->term_id);
-            $combo->location_name = $location->name;
-            $combo->location_slug = $location->slug;
-            $combo->specialty_name = $specialty->name;
-            $combo->specialty_slug = $specialty->slug;
-        }
-        
-        $combo->url = !empty($combo->custom_slug) 
-            ? home_url($combo->custom_slug . '/') 
-            : $this->build_combination_url($combo->location_slug, $combo->specialty_slug);
-        
-        return rest_ensure_response($combo);
-    }
-    
-    /**
-     * REST API: Update Combination
-     */
-    public function rest_update_combination($request) {
-        global $wpdb;
-        
-        $id = $request->get_param('id');
-        
-        // Check if combination exists
-        $exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table_name} WHERE id = %d",
-            $id
-        ));
-        
-        if (!$exists) {
-            return new WP_Error('not_found', 'Combination not found', array('status' => 404));
-        }
-        
-        // Build update data
-        $update_data = array();
-        $update_format = array();
-        
-        $fields = array(
-            'custom_title' => '%s',
-            'meta_title' => '%s',
-            'meta_description' => '%s',
-            'custom_description' => '%s',
-            'custom_content' => '%s',
-        );
-        
-        foreach ($fields as $field => $format) {
-            if ($request->has_param($field)) {
-                $update_data[$field] = $request->get_param($field);
-                $update_format[] = $format;
-            }
-        }
-        
-        // Handle boolean fields
-        if ($request->has_param('robots_index')) {
-            $update_data['robots_index'] = $request->get_param('robots_index') ? 1 : 0;
-            $update_format[] = '%d';
-        }
-        
-        if ($request->has_param('robots_follow')) {
-            $update_data['robots_follow'] = $request->get_param('robots_follow') ? 1 : 0;
-            $update_format[] = '%d';
-        }
-        
-        if (empty($update_data)) {
-            return new WP_Error('no_data', 'No data to update', array('status' => 400));
-        }
-        
-        // Update the combination
-        $result = $wpdb->update(
-            $this->table_name,
-            $update_data,
-            array('id' => $id),
-            $update_format,
-            array('%d')
-        );
-        
-        if ($result === false) {
-            return new WP_Error('update_failed', 'Failed to update combination', array('status' => 500));
-        }
-        
-        // Return updated combination
-        return $this->rest_get_combination($request);
-    }
-    
-    /**
-     * REST API: Update Combination by Slugs
-     */
-    public function rest_update_combination_by_slug($request) {
-        global $wpdb;
-        
-        $location_slug = $request->get_param('location');
-        $specialty_slug = $request->get_param('specialty');
-        
-        // Get term IDs from slugs
-        $location = get_term_by('slug', $location_slug, $this->taxonomy_2);
-        $specialty = get_term_by('slug', $specialty_slug, $this->taxonomy_1);
-        
-        if (!$location || !$specialty) {
-            return new WP_Error('not_found', 'Location or specialty not found', array('status' => 404));
-        }
-        
-        // Get or create combination
-        $combo = $wpdb->get_row($wpdb->prepare(
-            "SELECT id FROM {$this->table_name} WHERE location_id = %d AND specialty_id = %d",
-            $location->term_id,
-            $specialty->term_id
-        ));
-        
-        if (!$combo) {
-            // Create if doesn't exist
-            $id = $this->create_combination_entry($location->term_id, $specialty->term_id);
-            if (!$id) {
-                return new WP_Error('creation_failed', 'Failed to create combination', array('status' => 500));
-            }
-        } else {
-            $id = $combo->id;
-        }
-        
-        // Update the combination
-        $request->set_param('id', $id);
-        return $this->rest_update_combination($request);
-    }
-    
-    /**
-     * REST API: Bulk Update Combinations
-     */
-    public function rest_bulk_update_combinations($request) {
-        $updates = $request->get_json_params();
-        
-        if (!is_array($updates)) {
-            return new WP_Error('invalid_data', 'Request body must be an array', array('status' => 400));
-        }
-        
-        $results = array(
-            'success' => array(),
-            'errors' => array()
-        );
-        
-        foreach ($updates as $update) {
-            if (!isset($update['location_slug']) || !isset($update['specialty_slug'])) {
-                $results['errors'][] = array(
-                    'item' => $update,
-                    'error' => 'Missing location_slug or specialty_slug'
-                );
+            if (!empty($existing)) {
+                $skipped++;
                 continue;
             }
             
-            // Create a sub-request for each update
-            $sub_request = new WP_REST_Request('POST', '/tc/v1/combinations/by-slug/' . 
-                $update['location_slug'] . '/' . $update['specialty_slug']);
-            $sub_request->set_body_params($update);
-            $sub_request->set_header('X-TC-API-Key', $request->get_header('X-TC-API-Key'));
+            // Get term objects
+            $location = get_term($row->location_id, $this->taxonomy_2);
+            $specialty = get_term($row->specialty_id, $this->taxonomy_1);
             
-            $response = $this->rest_update_combination_by_slug($sub_request);
+            if (!$location || !$specialty) {
+                continue;
+            }
             
-            if (is_wp_error($response)) {
-                $results['errors'][] = array(
-                    'location' => $update['location_slug'],
-                    'specialty' => $update['specialty_slug'],
-                    'error' => $response->get_error_message()
-                );
-            } else {
-                $results['success'][] = array(
-                    'location' => $update['location_slug'],
-                    'specialty' => $update['specialty_slug'],
-                    'data' => $response->get_data()
-                );
+            // Create post
+            $post_data = array(
+                'post_type' => $this->cpt_slug,
+                'post_title' => !empty($row->custom_title) ? $row->custom_title : 'English ' . $specialty->name . ' in ' . $location->name,
+                'post_name' => 'english-' . $specialty->slug . '-in-' . $location->slug,
+                'post_content' => $row->custom_content ?: '',
+                'post_status' => 'publish',
+                'meta_input' => array(
+                    '_tc_location_id' => $row->location_id,
+                    '_tc_specialty_id' => $row->specialty_id,
+                    '_tc_brief_intro' => $row->brief_intro ?: '',
+                    '_tc_full_description' => $row->full_description ?: $row->custom_description ?: '',
+                    '_tc_header_block_id' => $row->header_content_block_id ?: '',
+                    '_tc_content_block_id' => $row->content_block_id ?: '',
+                    '_tc_footer_block_id' => $row->footer_content_block_id ?: '',
+                    '_tc_seo_title' => $row->meta_title ?: '',
+                    '_tc_seo_description' => $row->meta_description ?: '',
+                    '_tc_migrated' => true
+                )
+            );
+            
+            $post_id = wp_insert_post($post_data);
+            
+            if (!is_wp_error($post_id)) {
+                $migrated++;
             }
         }
         
-        return rest_ensure_response($results);
+        echo '<div class="notice notice-success"><p>Migration complete! Migrated ' . $migrated . ' combinations. Skipped ' . $skipped . ' existing.</p></div>';
+        
+        // Option to delete old table
+        ?>
+        <form method="post" action="">
+            <?php wp_nonce_field('tc_cleanup', 'tc_nonce'); ?>
+            <p>Migration successful. You can now safely delete the old database table.</p>
+            <p class="submit">
+                <input type="submit" name="delete_table" class="button-secondary" value="Delete Old Table" onclick="return confirm('Are you sure? This cannot be undone.');">
+            </p>
+        </form>
+        <?php
+        
+        if (isset($_POST['delete_table']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_cleanup')) {
+            $wpdb->query("DROP TABLE IF EXISTS {$this->table_name}");
+            echo '<div class="notice notice-success"><p>Old table deleted successfully!</p></div>';
+        }
+    }
+    
+    /**
+     * Generate All Combinations
+     */
+    public function generate_all_combinations() {
+        $locations = get_terms(array('taxonomy' => $this->taxonomy_2, 'hide_empty' => false));
+        $specialties = get_terms(array('taxonomy' => $this->taxonomy_1, 'hide_empty' => false));
+        
+        $created = 0;
+        $existing = 0;
+        
+        foreach ($locations as $location) {
+            foreach ($specialties as $specialty) {
+                if ($this->create_combination_post($location->term_id, $specialty->term_id)) {
+                    $created++;
+                } else {
+                    $existing++;
+                }
+            }
+        }
+        
+        echo '<div class="notice notice-success"><p>Generation complete! Created ' . $created . ' new combinations. ' . $existing . ' already existed.</p></div>';
+    }
+    
+    /**
+     * Generate Combinations for New Term
+     */
+    public function generate_combinations_for_new_term($term_id, $tt_id) {
+        if (!get_option('tc_auto_generate', 1)) {
+            return;
+        }
+        
+        $term = get_term($term_id);
+        if (!$term) return;
+        
+        // Determine which taxonomy this is
+        if ($term->taxonomy === $this->taxonomy_1) {
+            // New specialty - create combinations with all locations
+            $locations = get_terms(array('taxonomy' => $this->taxonomy_2, 'hide_empty' => false));
+            foreach ($locations as $location) {
+                $this->create_combination_post($location->term_id, $term_id);
+            }
+        } elseif ($term->taxonomy === $this->taxonomy_2) {
+            // New location - create combinations with all specialties
+            $specialties = get_terms(array('taxonomy' => $this->taxonomy_1, 'hide_empty' => false));
+            foreach ($specialties as $specialty) {
+                $this->create_combination_post($term_id, $specialty->term_id);
+            }
+        }
+    }
+    
+    /**
+     * Create Combination Post
+     */
+    private function create_combination_post($location_id, $specialty_id) {
+        // Check if already exists
+        $existing = get_posts(array(
+            'post_type' => $this->cpt_slug,
+            'meta_query' => array(
+                'relation' => 'AND',
+                array(
+                    'key' => '_tc_location_id',
+                    'value' => $location_id
+                ),
+                array(
+                    'key' => '_tc_specialty_id',
+                    'value' => $specialty_id
+                )
+            ),
+            'posts_per_page' => 1
+        ));
+        
+        if (!empty($existing)) {
+            return false;
+        }
+        
+        $location = get_term($location_id, $this->taxonomy_2);
+        $specialty = get_term($specialty_id, $this->taxonomy_1);
+        
+        if (!$location || !$specialty) {
+            return false;
+        }
+        
+        // Create post
+        $post_data = array(
+            'post_type' => $this->cpt_slug,
+            'post_title' => 'English ' . $specialty->name . ' in ' . $location->name,
+            'post_name' => 'english-' . $specialty->slug . '-in-' . $location->slug,
+            'post_content' => '',
+            'post_status' => get_option('tc_default_status', 'publish'),
+            'meta_input' => array(
+                '_tc_location_id' => $location_id,
+                '_tc_specialty_id' => $specialty_id,
+                '_tc_header_block_id' => get_option('tc_default_header_block', ''),
+                '_tc_content_block_id' => get_option('tc_default_content_block', ''),
+                '_tc_footer_block_id' => get_option('tc_default_footer_block', ''),
+                '_tc_seo_title' => 'English ' . $specialty->name . ' in ' . $location->name . ' | Healthcare',
+                '_tc_seo_description' => 'Find English-speaking ' . strtolower($specialty->name) . ' in ' . $location->name . '. Compare healthcare providers ranked by English communication ability.'
+            )
+        );
+        
+        $post_id = wp_insert_post($post_data);
+        
+        return !is_wp_error($post_id);
+    }
+    
+    /**
+     * Check if Migration is Needed
+     */
+    private function maybe_migrate_from_virtual_pages() {
+        global $wpdb;
+        
+        // Check if old table exists with data
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$this->table_name}'") === $this->table_name;
+        
+        if ($table_exists) {
+            $count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+            if ($count > 0) {
+                // Check if migration has been done
+                $migrated_count = get_posts(array(
+                    'post_type' => $this->cpt_slug,
+                    'meta_key' => '_tc_migrated',
+                    'posts_per_page' => 1
+                ));
+                
+                if (empty($migrated_count)) {
+                    // Show admin notice about migration
+                    add_action('admin_notices', function() use ($count) {
+                        ?>
+                        <div class="notice notice-warning">
+                            <p><strong>Taxonomy Combinations:</strong> Found <?php echo $count; ?> combinations that need to be migrated to the new system. 
+                            <a href="<?php echo admin_url('admin.php?page=tc-migrate'); ?>">Migrate Now</a></p>
+                        </div>
+                        <?php
+                    });
+                }
+            }
+        }
+    }
+    
+    /**
+     * Shortcode: TC Field
+     */
+    public function shortcode_tc_field($atts) {
+        global $post;
+        
+        if (!$post || $post->post_type !== $this->cpt_slug) {
+            return '';
+        }
+        
+        $atts = shortcode_atts(array(
+            'field' => 'title'
+        ), $atts);
+        
+        switch ($atts['field']) {
+            case 'title':
+                return $post->post_title;
+                
+            case 'brief_intro':
+                return get_post_meta($post->ID, '_tc_brief_intro', true);
+                
+            case 'full_description':
+                return get_post_meta($post->ID, '_tc_full_description', true);
+                
+            case 'location':
+                $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+                $location = get_term($location_id, $this->taxonomy_2);
+                return $location ? $location->name : '';
+                
+            case 'specialty':
+                $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+                $specialty = get_term($specialty_id, $this->taxonomy_1);
+                return $specialty ? $specialty->name : '';
+                
+            case 'url':
+                return get_permalink($post->ID);
+                
+            default:
+                return '';
+        }
+    }
+    
+    /**
+     * Shortcode: TC Posts
+     */
+    public function shortcode_tc_posts($atts) {
+        global $post;
+        
+        if (!$post || $post->post_type !== $this->cpt_slug) {
+            return '';
+        }
+        
+        $atts = shortcode_atts(array(
+            'number' => 6,
+            'columns' => 3,
+            'show_excerpt' => 'yes',
+            'show_image' => 'yes'
+        ), $atts);
+        
+        $location_id = get_post_meta($post->ID, '_tc_location_id', true);
+        $specialty_id = get_post_meta($post->ID, '_tc_specialty_id', true);
+        
+        $query = new WP_Query(array(
+            'post_type' => $this->post_type,
+            'posts_per_page' => intval($atts['number']),
+            'tax_query' => array(
+                'relation' => 'AND',
+                array(
+                    'taxonomy' => $this->taxonomy_1,
+                    'field' => 'term_id',
+                    'terms' => $specialty_id
+                ),
+                array(
+                    'taxonomy' => $this->taxonomy_2,
+                    'field' => 'term_id',
+                    'terms' => $location_id
+                )
+            )
+        ));
+        
+        ob_start();
+        
+        if ($query->have_posts()) :
+            echo '<div class="tc-posts-grid" style="display: grid; grid-template-columns: repeat(' . intval($atts['columns']) . ', 1fr); gap: 20px;">';
+            
+            while ($query->have_posts()) : $query->the_post();
+                ?>
+                <div class="tc-post-item">
+                    <?php if ($atts['show_image'] === 'yes' && has_post_thumbnail()) : ?>
+                        <div class="tc-post-image">
+                            <?php the_post_thumbnail('medium'); ?>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <h3 class="tc-post-title">
+                        <a href="<?php the_permalink(); ?>"><?php the_title(); ?></a>
+                    </h3>
+                    
+                    <?php if ($atts['show_excerpt'] === 'yes') : ?>
+                        <div class="tc-post-excerpt">
+                            <?php the_excerpt(); ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <?php
+            endwhile;
+            
+            echo '</div>';
+        endif;
+        
+        wp_reset_postdata();
+        
+        return ob_get_clean();
     }
 }
 
 // Initialize the plugin
-$GLOBALS['tc_plugin_instance'] = new TaxonomyCombinationPages();
-
-// Register activation/deactivation hooks
-register_activation_hook(__FILE__, function() {
-    $GLOBALS['tc_plugin_instance']->activate_plugin();
-});
-
-register_deactivation_hook(__FILE__, function() {
-    $GLOBALS['tc_plugin_instance']->deactivate_plugin();
-});
-
-/**
- * Helper function to get combination data
- */
-function tc_get_combination_data() {
-    global $wp_query;
-    
-    if (isset($wp_query->tc_data)) {
-        return $wp_query->tc_data;
-    }
-    
-    return null;
-}
-
-/**
- * Helper function to check if on combination page
- */
-function is_taxonomy_combination() {
-    return (bool) get_query_var('tc_combo');
-}
-
-/**
- * Helper function to get combination URL
- */
-function tc_get_combination_url($location_slug, $specialty_slug) {
-    $base = get_option('tc_url_base', 'services');
-    return home_url($base . '/' . $location_slug . '/' . $specialty_slug . '/');
-}
+new TaxonomyCombinationPages();
