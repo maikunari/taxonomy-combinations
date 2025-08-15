@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Taxonomy Combination Pages with Blocksy
  * Description: Creates virtual pages for taxonomy combinations with SEO support and Blocksy Content Blocks integration
- * Version: 2.0
+ * Version: 2.1
  * Author: maikunari
  */
 
@@ -63,6 +63,9 @@ class TaxonomyCombinationPages {
         // Blocksy integration hooks
         add_filter('blocksy:content-blocks:display-conditions', array($this, 'add_blocksy_conditions'));
         add_filter('blocksy:content-blocks:condition-match', array($this, 'check_blocksy_condition'), 10, 3);
+        
+        // REST API
+        add_action('rest_api_init', array($this, 'register_rest_routes'));
     }
     
     /**
@@ -567,13 +570,14 @@ get_footer();
         
         // Generate defaults with "English" prefix for better SEO
         $default_title = sprintf('English %s in %s', $specialty->name, $location->name);
-        $default_meta_title = sprintf('English %s in %s | Best English-Speaking %s Services', 
+        $default_meta_title = sprintf('English-Speaking %s in %s | Find English-Friendly Healthcare', 
             $specialty->name, 
-            $location->name,
-            $specialty->name
+            $location->name
         );
+        
+        // More accurate descriptions focusing on English-friendly services
         $default_meta_desc = sprintf(
-            'Find the best English-speaking %s in %s. Native English %s services with experienced professionals. Book your appointment today.',
+            'Find English-speaking %s in %s. Compare Japanese healthcare providers ranked by English communication ability. Read reviews and book appointments with English-friendly %s.',
             strtolower($specialty->name),
             $location->name,
             strtolower($specialty->name)
@@ -961,6 +965,15 @@ get_footer();
             'manage_options',
             'tc-settings',
             array($this, 'settings_page')
+        );
+        
+        add_submenu_page(
+            'taxonomy-combinations',
+            'Fix Titles',
+            'Fix Titles',
+            'manage_options',
+            'tc-fix-titles',
+            array($this, 'fix_titles_page')
         );
     }
     
@@ -1814,13 +1827,211 @@ get_footer();
     }
     
     /**
+     * Fix Titles Page
+     */
+    public function fix_titles_page() {
+        global $wpdb;
+        
+        // Handle title fix submission
+        if (isset($_POST['fix_titles']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_fix_titles')) {
+            $combinations = $wpdb->get_results(
+                "SELECT c.*, l.name as location_name, s.name as specialty_name
+                 FROM {$this->table_name} c
+                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id"
+            );
+            
+            $updated_count = 0;
+            foreach ($combinations as $combo) {
+                // Check if title doesn't start with "English"
+                if (strpos($combo->custom_title, 'English ') !== 0) {
+                    $new_title = sprintf('English %s in %s', $combo->specialty_name, $combo->location_name);
+                    $new_meta_title = sprintf('English-Speaking %s in %s | Find English-Friendly Healthcare', 
+                        $combo->specialty_name, 
+                        $combo->location_name
+                    );
+                    
+                    $wpdb->update(
+                        $this->table_name,
+                        array(
+                            'custom_title' => $new_title,
+                            'meta_title' => $new_meta_title
+                        ),
+                        array('id' => $combo->id),
+                        array('%s', '%s'),
+                        array('%d')
+                    );
+                    $updated_count++;
+                }
+            }
+            
+            echo '<div class="notice notice-success"><p>' . sprintf('Updated %d combination titles!', $updated_count) . '</p></div>';
+        }
+        
+        // Handle description fix submission
+        if (isset($_POST['fix_descriptions']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_fix_descriptions')) {
+            $combinations = $wpdb->get_results(
+                "SELECT c.*, l.name as location_name, s.name as specialty_name
+                 FROM {$this->table_name} c
+                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id"
+            );
+            
+            $updated_count = 0;
+            foreach ($combinations as $combo) {
+                // Update if it contains "Native English" or needs improvement
+                if (strpos($combo->meta_description, 'Native English') !== false || 
+                    strpos($combo->meta_description, 'native English') !== false ||
+                    strpos($combo->meta_description, 'ranked by English') === false) {
+                    
+                    $new_meta_desc = sprintf(
+                        'Find English-speaking %s in %s. Compare Japanese healthcare providers ranked by English communication ability. Read reviews and book appointments with English-friendly %s.',
+                        strtolower($combo->specialty_name),
+                        $combo->location_name,
+                        strtolower($combo->specialty_name)
+                    );
+                    
+                    $wpdb->update(
+                        $this->table_name,
+                        array('meta_description' => $new_meta_desc),
+                        array('id' => $combo->id),
+                        array('%s'),
+                        array('%d')
+                    );
+                    $updated_count++;
+                }
+            }
+            
+            echo '<div class="notice notice-success"><p>' . sprintf('Updated %d meta descriptions!', $updated_count) . '</p></div>';
+        }
+        
+        // Get combinations that need fixing
+        $needs_fixing = $wpdb->get_results(
+            "SELECT c.*, l.name as location_name, s.name as specialty_name
+             FROM {$this->table_name} c
+             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
+             WHERE c.custom_title NOT LIKE 'English %'"
+        );
+        
+        // Get combinations with outdated descriptions
+        $needs_desc_fix = $wpdb->get_results(
+            "SELECT c.*, l.name as location_name, s.name as specialty_name
+             FROM {$this->table_name} c
+             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
+             WHERE c.meta_description LIKE '%Native English%' 
+                OR c.meta_description LIKE '%native English%'
+                OR c.meta_description NOT LIKE '%ranked by English%'"
+        );
+        
+        ?>
+        <div class="wrap">
+            <h1>Fix Titles & SEO Descriptions</h1>
+            
+            <!-- Fix Titles Section -->
+            <div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4;">
+                <h2>Fix Page Titles</h2>
+                <?php if (count($needs_fixing) > 0) : ?>
+                    <div class="notice notice-warning inline">
+                        <p>Found <?php echo count($needs_fixing); ?> combinations with titles that need updating.</p>
+                    </div>
+                    
+                    <form method="post">
+                        <?php wp_nonce_field('tc_fix_titles', 'tc_nonce'); ?>
+                        
+                        <h3>Sample titles that will be updated:</h3>
+                        <table class="wp-list-table widefat fixed striped">
+                            <thead>
+                                <tr>
+                                    <th>Current Title</th>
+                                    <th>New Title</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php 
+                                $sample_count = 0;
+                                foreach ($needs_fixing as $combo) : 
+                                    if ($sample_count++ >= 5) break;
+                                ?>
+                                    <tr>
+                                        <td><?php echo esc_html($combo->custom_title); ?></td>
+                                        <td><strong><?php echo esc_html(sprintf('English %s in %s', $combo->specialty_name, $combo->location_name)); ?></strong></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        
+                        <p class="submit">
+                            <input type="submit" name="fix_titles" class="button-primary" value="Fix All <?php echo count($needs_fixing); ?> Titles" 
+                                   onclick="return confirm('This will update all titles to include the English prefix. Continue?');">
+                        </p>
+                    </form>
+                <?php else : ?>
+                    <div class="notice notice-success inline">
+                        <p>✓ All combination titles are properly formatted!</p>
+                    </div>
+                <?php endif; ?>
+            </div>
+            
+            <!-- Fix Descriptions Section -->
+            <div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4;">
+                <h2>Fix SEO Meta Descriptions</h2>
+                <?php if (count($needs_desc_fix) > 0) : ?>
+                    <div class="notice notice-warning inline">
+                        <p>Found <?php echo count($needs_desc_fix); ?> combinations with outdated SEO descriptions.</p>
+                    </div>
+                    
+                    <form method="post">
+                        <?php wp_nonce_field('tc_fix_descriptions', 'tc_nonce'); ?>
+                        
+                        <h3>New Description Format:</h3>
+                        <div style="background: #f0f0f1; padding: 15px; margin: 15px 0; border-left: 4px solid #2271b1;">
+                            <p><strong>Old (Inaccurate):</strong><br>
+                            "Find the best English-speaking [specialty] in [location]. <span style="color: red;">Native English</span> [specialty] services with experienced professionals."</p>
+                            
+                            <p><strong>New (Accurate):</strong><br>
+                            "Find English-speaking [specialty] in [location]. Compare Japanese healthcare providers <span style="color: green;">ranked by English communication ability</span>. Read reviews and book appointments with English-friendly [specialty]."</p>
+                        </div>
+                        
+                        <p class="submit">
+                            <input type="submit" name="fix_descriptions" class="button-primary" value="Fix All <?php echo count($needs_desc_fix); ?> Descriptions" 
+                                   onclick="return confirm('This will update all meta descriptions to be more accurate. Continue?');">
+                        </p>
+                    </form>
+                <?php else : ?>
+                    <div class="notice notice-success inline">
+                        <p>✓ All meta descriptions are accurate and optimized!</p>
+                    </div>
+                <?php endif; ?>
+        </div>
+        <?php
+    }
+    
+    /**
      * Settings Page
      */
     public function settings_page() {
+        // Handle API key generation
+        if (isset($_POST['generate_api_key']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_settings')) {
+            $api_key = wp_generate_password(32, false);
+            update_option('tc_api_key', $api_key);
+            echo '<div class="notice notice-success"><p>New API key generated successfully!</p></div>';
+        }
+        
+        // Handle API key deletion
+        if (isset($_POST['delete_api_key']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_settings')) {
+            delete_option('tc_api_key');
+            echo '<div class="notice notice-success"><p>API key deleted successfully!</p></div>';
+        }
+        
+        // Handle settings save
         if (isset($_POST['submit']) && wp_verify_nonce($_POST['tc_nonce'], 'tc_settings')) {
             update_option('tc_url_base', sanitize_title($_POST['url_base']));
             echo '<div class="notice notice-success"><p>Settings saved! Please visit Settings > Permalinks to refresh rewrite rules.</p></div>';
         }
+        
+        $current_api_key = get_option('tc_api_key', '');
         
         ?>
         <div class="wrap">
@@ -1829,6 +2040,7 @@ get_footer();
             <form method="post" action="">
                 <?php wp_nonce_field('tc_settings', 'tc_nonce'); ?>
                 
+                <h2>General Settings</h2>
                 <table class="form-table">
                     <tr>
                         <th><label for="url_base">URL Base</label></th>
@@ -1838,6 +2050,42 @@ get_footer();
                             <p class="description">
                                 Base URL for combination pages. 
                                 Example: <?php echo home_url('/[base]/location/specialty/'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <h2>REST API Settings</h2>
+                <table class="form-table">
+                    <tr>
+                        <th><label>API Key</label></th>
+                        <td>
+                            <?php if ($current_api_key): ?>
+                                <input type="text" value="<?php echo esc_attr($current_api_key); ?>" 
+                                       readonly style="width: 350px; font-family: monospace;" />
+                                <button type="submit" name="delete_api_key" class="button button-secondary" 
+                                        onclick="return confirm('Are you sure you want to delete the API key?');">
+                                    Delete Key
+                                </button>
+                                <p class="description">
+                                    Use this key in the <code>X-TC-API-Key</code> header for REST API authentication.
+                                </p>
+                            <?php else: ?>
+                                <button type="submit" name="generate_api_key" class="button button-primary">
+                                    Generate API Key
+                                </button>
+                                <p class="description">
+                                    Generate an API key to enable REST API access to combination data.
+                                </p>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label>API Endpoints</label></th>
+                        <td>
+                            <code><?php echo rest_url('tc/v1/combinations'); ?></code>
+                            <p class="description">
+                                Base endpoint for REST API operations. See documentation below for available endpoints.
                             </p>
                         </td>
                     </tr>
@@ -1895,6 +2143,88 @@ get_footer();
                     <input type="submit" name="submit" class="button-primary" value="Save Settings">
                 </p>
             </form>
+            
+            <hr style="margin: 30px 0;">
+            
+            <h2>REST API Documentation</h2>
+            <div style="background: #fff; border: 1px solid #ccd0d4; padding: 20px; margin-top: 20px;">
+                <h3>Authentication</h3>
+                <p>All API requests require authentication using the API key in the request header:</p>
+                <pre style="background: #f1f1f1; padding: 10px;">X-TC-API-Key: YOUR_API_KEY</pre>
+                
+                <h3>Available Endpoints</h3>
+                
+                <h4>Get All Combinations</h4>
+                <pre style="background: #f1f1f1; padding: 10px;">GET <?php echo rest_url('tc/v1/combinations'); ?></pre>
+                
+                <h4>Get Single Combination by ID</h4>
+                <pre style="background: #f1f1f1; padding: 10px;">GET <?php echo rest_url('tc/v1/combinations/{id}'); ?></pre>
+                
+                <h4>Get Combination by Slug</h4>
+                <pre style="background: #f1f1f1; padding: 10px;">GET <?php echo rest_url('tc/v1/combinations/slug/{slug}'); ?></pre>
+                
+                <h4>Update Combination</h4>
+                <pre style="background: #f1f1f1; padding: 10px;">PUT <?php echo rest_url('tc/v1/combinations/{id}'); ?>
+
+Body (JSON):
+{
+    "custom_title": "English Dentistry in Shibuya",
+    "custom_description": "Find the best English-speaking dentists...",
+    "meta_title": "English Dentists in Shibuya | Healthcare",
+    "meta_description": "Top-rated English-speaking dentists...",
+    "content_block_id": 123,
+    "robots_index": true,
+    "robots_follow": true
+}</pre>
+                
+                <h4>Bulk Update Combinations</h4>
+                <pre style="background: #f1f1f1; padding: 10px;">POST <?php echo rest_url('tc/v1/combinations/bulk'); ?>
+
+Body (JSON):
+{
+    "combinations": [
+        {
+            "id": 1,
+            "custom_title": "New Title",
+            "meta_description": "New description"
+        },
+        {
+            "slug": "english-dentistry-in-tokyo",
+            "custom_description": "Updated description"
+        }
+    ]
+}</pre>
+                
+                <h3>Example Usage (JavaScript)</h3>
+                <pre style="background: #f1f1f1; padding: 10px;">fetch('<?php echo rest_url('tc/v1/combinations/1'); ?>', {
+    method: 'PUT',
+    headers: {
+        'Content-Type': 'application/json',
+        'X-TC-API-Key': 'YOUR_API_KEY'
+    },
+    body: JSON.stringify({
+        custom_title: 'Updated Title',
+        meta_description: 'Updated SEO description'
+    })
+})
+.then(response => response.json())
+.then(data => console.log(data));</pre>
+                
+                <h3>Response Format</h3>
+                <p>All successful responses return JSON with the following structure:</p>
+                <pre style="background: #f1f1f1; padding: 10px;">{
+    "success": true,
+    "data": {
+        "id": 1,
+        "location_id": 5,
+        "specialty_id": 10,
+        "custom_title": "English Dentistry in Shibuya",
+        "custom_slug": "english-dentistry-in-shibuya",
+        "meta_description": "Find English-speaking dentists...",
+        // ... other fields
+    }
+}</pre>
+            </div>
         </div>
         <?php
     }
@@ -2143,6 +2473,412 @@ get_footer();
             $base = !empty($this->url_base) ? $this->url_base . '/' : '';
             return home_url($base . $location_slug . '/' . $specialty_slug . '/');
         }
+    }
+    
+    /**
+     * Register REST API Routes
+     */
+    public function register_rest_routes() {
+        $namespace = 'tc/v1';
+        
+        // Get all combinations
+        register_rest_route($namespace, '/combinations', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_combinations'),
+            'permission_callback' => '__return_true',
+            'args' => array(
+                'location_id' => array(
+                    'type' => 'integer',
+                    'sanitize_callback' => 'absint',
+                ),
+                'specialty_id' => array(
+                    'type' => 'integer',
+                    'sanitize_callback' => 'absint',
+                ),
+                'location_slug' => array(
+                    'type' => 'string',
+                    'sanitize_callback' => 'sanitize_text_field',
+                ),
+                'specialty_slug' => array(
+                    'type' => 'string',
+                    'sanitize_callback' => 'sanitize_text_field',
+                ),
+            ),
+        ));
+        
+        // Get single combination by ID
+        register_rest_route($namespace, '/combinations/(?P<id>\d+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_combination'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        // Update combination by ID
+        register_rest_route($namespace, '/combinations/(?P<id>\d+)', array(
+            'methods' => array('POST', 'PUT', 'PATCH'),
+            'callback' => array($this, 'rest_update_combination'),
+            'permission_callback' => array($this, 'rest_check_permissions'),
+            'args' => $this->get_rest_update_args(),
+        ));
+        
+        // Get combination by slugs
+        register_rest_route($namespace, '/combinations/by-slug/(?P<location>[a-z0-9-]+)/(?P<specialty>[a-z0-9-]+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_combination_by_slug'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        // Update combination by slugs
+        register_rest_route($namespace, '/combinations/by-slug/(?P<location>[a-z0-9-]+)/(?P<specialty>[a-z0-9-]+)', array(
+            'methods' => array('POST', 'PUT', 'PATCH'),
+            'callback' => array($this, 'rest_update_combination_by_slug'),
+            'permission_callback' => array($this, 'rest_check_permissions'),
+            'args' => $this->get_rest_update_args(),
+        ));
+        
+        // Bulk update combinations
+        register_rest_route($namespace, '/combinations/bulk', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'rest_bulk_update_combinations'),
+            'permission_callback' => array($this, 'rest_check_permissions'),
+        ));
+    }
+    
+    /**
+     * REST API: Check Permissions
+     */
+    public function rest_check_permissions($request) {
+        // Check for API key in header
+        $api_key = $request->get_header('X-TC-API-Key');
+        $stored_key = get_option('tc_api_key');
+        
+        if ($api_key && $stored_key && $api_key === $stored_key) {
+            return true;
+        }
+        
+        // Fall back to WordPress authentication
+        return current_user_can('edit_posts');
+    }
+    
+    /**
+     * REST API: Get Update Arguments
+     */
+    private function get_rest_update_args() {
+        return array(
+            'custom_title' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+            ),
+            'meta_title' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+            ),
+            'meta_description' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_textarea_field',
+            ),
+            'custom_description' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_textarea_field',
+            ),
+            'custom_content' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'wp_kses_post',
+            ),
+            'robots_index' => array(
+                'type' => 'boolean',
+            ),
+            'robots_follow' => array(
+                'type' => 'boolean',
+            ),
+        );
+    }
+    
+    /**
+     * REST API: Get All Combinations
+     */
+    public function rest_get_combinations($request) {
+        global $wpdb;
+        
+        $where_clauses = array('1=1');
+        $where_values = array();
+        
+        if ($request->get_param('location_id')) {
+            $where_clauses[] = 'c.location_id = %d';
+            $where_values[] = $request->get_param('location_id');
+        }
+        
+        if ($request->get_param('specialty_id')) {
+            $where_clauses[] = 'c.specialty_id = %d';
+            $where_values[] = $request->get_param('specialty_id');
+        }
+        
+        if ($request->get_param('location_slug')) {
+            $where_clauses[] = 'l.slug = %s';
+            $where_values[] = $request->get_param('location_slug');
+        }
+        
+        if ($request->get_param('specialty_slug')) {
+            $where_clauses[] = 's.slug = %s';
+            $where_values[] = $request->get_param('specialty_slug');
+        }
+        
+        $where_sql = implode(' AND ', $where_clauses);
+        
+        $query = "SELECT c.*, l.name as location_name, l.slug as location_slug,
+                        s.name as specialty_name, s.slug as specialty_slug
+                 FROM {$this->table_name} c
+                 LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+                 LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
+                 WHERE $where_sql
+                 ORDER BY l.name, s.name";
+        
+        if (!empty($where_values)) {
+            $query = $wpdb->prepare($query, $where_values);
+        }
+        
+        $results = $wpdb->get_results($query);
+        
+        // Add URLs to results
+        foreach ($results as &$result) {
+            $result->url = !empty($result->custom_slug) 
+                ? home_url($result->custom_slug . '/') 
+                : $this->build_combination_url($result->location_slug, $result->specialty_slug);
+        }
+        
+        return rest_ensure_response($results);
+    }
+    
+    /**
+     * REST API: Get Single Combination
+     */
+    public function rest_get_combination($request) {
+        global $wpdb;
+        
+        $id = $request->get_param('id');
+        
+        $combo = $wpdb->get_row($wpdb->prepare(
+            "SELECT c.*, l.name as location_name, l.slug as location_slug,
+                    s.name as specialty_name, s.slug as specialty_slug
+             FROM {$this->table_name} c
+             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
+             WHERE c.id = %d",
+            $id
+        ));
+        
+        if (!$combo) {
+            return new WP_Error('not_found', 'Combination not found', array('status' => 404));
+        }
+        
+        $combo->url = !empty($combo->custom_slug) 
+            ? home_url($combo->custom_slug . '/') 
+            : $this->build_combination_url($combo->location_slug, $combo->specialty_slug);
+        
+        return rest_ensure_response($combo);
+    }
+    
+    /**
+     * REST API: Get Combination by Slugs
+     */
+    public function rest_get_combination_by_slug($request) {
+        global $wpdb;
+        
+        $location_slug = $request->get_param('location');
+        $specialty_slug = $request->get_param('specialty');
+        
+        // Get term IDs from slugs
+        $location = get_term_by('slug', $location_slug, $this->taxonomy_2);
+        $specialty = get_term_by('slug', $specialty_slug, $this->taxonomy_1);
+        
+        if (!$location || !$specialty) {
+            return new WP_Error('not_found', 'Location or specialty not found', array('status' => 404));
+        }
+        
+        $combo = $wpdb->get_row($wpdb->prepare(
+            "SELECT c.*, l.name as location_name, l.slug as location_slug,
+                    s.name as specialty_name, s.slug as specialty_slug
+             FROM {$this->table_name} c
+             LEFT JOIN {$wpdb->terms} l ON c.location_id = l.term_id
+             LEFT JOIN {$wpdb->terms} s ON c.specialty_id = s.term_id
+             WHERE c.location_id = %d AND c.specialty_id = %d",
+            $location->term_id,
+            $specialty->term_id
+        ));
+        
+        if (!$combo) {
+            // Create if doesn't exist
+            $this->create_combination_entry($location->term_id, $specialty->term_id);
+            $combo = $this->get_combination_data($location->term_id, $specialty->term_id);
+            $combo->location_name = $location->name;
+            $combo->location_slug = $location->slug;
+            $combo->specialty_name = $specialty->name;
+            $combo->specialty_slug = $specialty->slug;
+        }
+        
+        $combo->url = !empty($combo->custom_slug) 
+            ? home_url($combo->custom_slug . '/') 
+            : $this->build_combination_url($combo->location_slug, $combo->specialty_slug);
+        
+        return rest_ensure_response($combo);
+    }
+    
+    /**
+     * REST API: Update Combination
+     */
+    public function rest_update_combination($request) {
+        global $wpdb;
+        
+        $id = $request->get_param('id');
+        
+        // Check if combination exists
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->table_name} WHERE id = %d",
+            $id
+        ));
+        
+        if (!$exists) {
+            return new WP_Error('not_found', 'Combination not found', array('status' => 404));
+        }
+        
+        // Build update data
+        $update_data = array();
+        $update_format = array();
+        
+        $fields = array(
+            'custom_title' => '%s',
+            'meta_title' => '%s',
+            'meta_description' => '%s',
+            'custom_description' => '%s',
+            'custom_content' => '%s',
+        );
+        
+        foreach ($fields as $field => $format) {
+            if ($request->has_param($field)) {
+                $update_data[$field] = $request->get_param($field);
+                $update_format[] = $format;
+            }
+        }
+        
+        // Handle boolean fields
+        if ($request->has_param('robots_index')) {
+            $update_data['robots_index'] = $request->get_param('robots_index') ? 1 : 0;
+            $update_format[] = '%d';
+        }
+        
+        if ($request->has_param('robots_follow')) {
+            $update_data['robots_follow'] = $request->get_param('robots_follow') ? 1 : 0;
+            $update_format[] = '%d';
+        }
+        
+        if (empty($update_data)) {
+            return new WP_Error('no_data', 'No data to update', array('status' => 400));
+        }
+        
+        // Update the combination
+        $result = $wpdb->update(
+            $this->table_name,
+            $update_data,
+            array('id' => $id),
+            $update_format,
+            array('%d')
+        );
+        
+        if ($result === false) {
+            return new WP_Error('update_failed', 'Failed to update combination', array('status' => 500));
+        }
+        
+        // Return updated combination
+        return $this->rest_get_combination($request);
+    }
+    
+    /**
+     * REST API: Update Combination by Slugs
+     */
+    public function rest_update_combination_by_slug($request) {
+        global $wpdb;
+        
+        $location_slug = $request->get_param('location');
+        $specialty_slug = $request->get_param('specialty');
+        
+        // Get term IDs from slugs
+        $location = get_term_by('slug', $location_slug, $this->taxonomy_2);
+        $specialty = get_term_by('slug', $specialty_slug, $this->taxonomy_1);
+        
+        if (!$location || !$specialty) {
+            return new WP_Error('not_found', 'Location or specialty not found', array('status' => 404));
+        }
+        
+        // Get or create combination
+        $combo = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM {$this->table_name} WHERE location_id = %d AND specialty_id = %d",
+            $location->term_id,
+            $specialty->term_id
+        ));
+        
+        if (!$combo) {
+            // Create if doesn't exist
+            $id = $this->create_combination_entry($location->term_id, $specialty->term_id);
+            if (!$id) {
+                return new WP_Error('creation_failed', 'Failed to create combination', array('status' => 500));
+            }
+        } else {
+            $id = $combo->id;
+        }
+        
+        // Update the combination
+        $request->set_param('id', $id);
+        return $this->rest_update_combination($request);
+    }
+    
+    /**
+     * REST API: Bulk Update Combinations
+     */
+    public function rest_bulk_update_combinations($request) {
+        $updates = $request->get_json_params();
+        
+        if (!is_array($updates)) {
+            return new WP_Error('invalid_data', 'Request body must be an array', array('status' => 400));
+        }
+        
+        $results = array(
+            'success' => array(),
+            'errors' => array()
+        );
+        
+        foreach ($updates as $update) {
+            if (!isset($update['location_slug']) || !isset($update['specialty_slug'])) {
+                $results['errors'][] = array(
+                    'item' => $update,
+                    'error' => 'Missing location_slug or specialty_slug'
+                );
+                continue;
+            }
+            
+            // Create a sub-request for each update
+            $sub_request = new WP_REST_Request('POST', '/tc/v1/combinations/by-slug/' . 
+                $update['location_slug'] . '/' . $update['specialty_slug']);
+            $sub_request->set_body_params($update);
+            $sub_request->set_header('X-TC-API-Key', $request->get_header('X-TC-API-Key'));
+            
+            $response = $this->rest_update_combination_by_slug($sub_request);
+            
+            if (is_wp_error($response)) {
+                $results['errors'][] = array(
+                    'location' => $update['location_slug'],
+                    'specialty' => $update['specialty_slug'],
+                    'error' => $response->get_error_message()
+                );
+            } else {
+                $results['success'][] = array(
+                    'location' => $update['location_slug'],
+                    'specialty' => $update['specialty_slug'],
+                    'data' => $response->get_data()
+                );
+            }
+        }
+        
+        return rest_ensure_response($results);
     }
 }
 

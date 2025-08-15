@@ -15,6 +15,9 @@ This plugin solves the problem of targeting location-based SEO searches like "En
 - **🗺️ XML Sitemap** - Automatic sitemap generation
 - **⚡ Bulk Management** - Edit multiple combinations efficiently
 - **🔧 Dynamic Shortcodes** - Insert combination-specific content
+- **🔌 REST API** - Full API with authentication for external app integration
+- **📈 Post Counts** - See healthcare provider counts in admin list
+- **⚡ Quick Actions** - View, Edit, and Clone combinations easily
 
 ## 📋 Requirements
 
@@ -230,7 +233,50 @@ For issues and questions:
 2. Review existing GitHub issues
 3. Create a new issue with details
 
+## 🔌 REST API
+
+The plugin provides a comprehensive REST API for external application integration.
+
+### Setup
+1. Go to **Tax Combinations → Settings**
+2. Click **Generate API Key** in the REST API Settings section
+3. Copy the generated API key
+4. Include the key in all API requests using the `X-TC-API-Key` header
+
+### Endpoints
+
+- `GET /wp-json/tc/v1/combinations` - Get all combinations
+- `GET /wp-json/tc/v1/combinations/{id}` - Get single combination by ID
+- `GET /wp-json/tc/v1/combinations/slug/{slug}` - Get combination by slug
+- `PUT /wp-json/tc/v1/combinations/{id}` - Update combination
+- `POST /wp-json/tc/v1/combinations/bulk` - Bulk update multiple combinations
+
+### Example
+
+```javascript
+fetch('https://yoursite.com/wp-json/tc/v1/combinations/1', {
+    method: 'PUT',
+    headers: {
+        'Content-Type': 'application/json',
+        'X-TC-API-Key': 'YOUR_API_KEY'
+    },
+    body: JSON.stringify({
+        custom_title: 'Updated Title',
+        meta_description: 'Updated SEO description'
+    })
+})
+```
+
 ## 🔄 Changelog
+
+### Version 2.1
+- Added REST API with authentication for external app integration
+- Added API key management interface in settings
+- Added Quick Actions (View, Edit, Clone) in admin list view
+- Added post count column showing number of healthcare providers
+- Fixed page title format to match SEO requirements
+- Updated SEO descriptions for accuracy
+- Added comprehensive API documentation in settings
 
 ### Version 2.0
 - Added Blocksy Content Blocks integration

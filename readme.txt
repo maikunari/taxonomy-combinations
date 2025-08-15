@@ -3,7 +3,7 @@ Contributors: yourname
 Tags: taxonomy, seo, virtual pages, blocksy, content blocks
 Requires at least: 5.0
 Tested up to: 6.4
-Stable tag: 2.0
+Stable tag: 2.1
 Requires PHP: 7.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -23,6 +23,7 @@ This plugin creates virtual pages for every combination of two taxonomies (e.g.,
 * **XML Sitemap** - Automatic sitemap generation for all combination pages
 * **Bulk Management** - Edit multiple combinations at once
 * **Dynamic Shortcodes** - Insert combination-specific content dynamically
+* **REST API** - Full REST API for external app integration with authentication
 
 **Perfect for:**
 
@@ -115,7 +116,22 @@ Yes, use the Bulk Edit feature to update multiple combinations at once (content 
 
 The virtual pages will no longer be accessible, but all your settings are preserved in the database if you reactivate later.
 
+= How do I use the REST API? =
+
+1. Generate an API key in Tax Combinations → Settings → REST API Settings
+2. Include the key in your API requests using the X-TC-API-Key header
+3. Use endpoints like GET/PUT /wp-json/tc/v1/combinations/{id}
+4. See the Settings page for full API documentation
+
 == Changelog ==
+
+= 2.1 =
+* Added REST API with authentication for external app integration
+* Added API key management in settings
+* Added Quick Actions (View, Edit, Clone) in admin list
+* Added post count column showing number of healthcare providers
+* Fixed page title format to match SEO requirements
+* Updated SEO descriptions for accuracy
 
 = 2.0 =
 * Added Blocksy Content Blocks integration
