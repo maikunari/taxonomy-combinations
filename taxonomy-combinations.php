@@ -41,6 +41,19 @@ class TaxonomyCombinationPages {
         add_filter('wpseo_opengraph_url', array($this, 'modify_yoast_canonical'));
         add_filter('wpseo_robots', array($this, 'modify_yoast_robots'));
         
+        // Theme title overrides
+        add_filter('single_term_title', array($this, 'modify_archive_title'), 10, 2);
+        add_filter('get_the_archive_title', array($this, 'modify_archive_title_display'), 10);
+        add_filter('document_title_parts', array($this, 'modify_document_title_parts'), 10);
+        
+        // Blocksy specific title override
+        add_filter('blocksy:hero:title', array($this, 'modify_blocksy_hero_title'), 10);
+        add_filter('blocksy:archive:render-card-layer', array($this, 'modify_blocksy_archive_card'), 10, 2);
+        
+        // Start output buffering to replace titles
+        add_action('template_redirect', array($this, 'start_title_replacement_buffer'), 1);
+        add_action('shutdown', array($this, 'end_title_replacement_buffer'), 999);
+        
         // Yoast XML Sitemap Integration
         add_filter('wpseo_sitemap_index', array($this, 'add_sitemap_index'));
         add_action('init', array($this, 'register_sitemap_endpoint'));
@@ -111,6 +124,8 @@ class TaxonomyCombinationPages {
             custom_slug varchar(255) DEFAULT '',
             custom_title varchar(255) DEFAULT '',
             custom_description text,
+            brief_intro text,
+            full_description longtext,
             meta_title varchar(255) DEFAULT '',
             meta_description text,
             custom_content longtext,
@@ -138,7 +153,27 @@ class TaxonomyCombinationPages {
         ob_end_clean();
         
         // Add version option for future updates
-        add_option('tc_plugin_version', '2.0');
+        update_option('tc_plugin_version', '2.1');
+        
+        // Check if we need to add new columns for existing installations
+        $this->maybe_add_new_columns();
+    }
+    
+    /**
+     * Maybe add new columns for existing installations
+     */
+    private function maybe_add_new_columns() {
+        global $wpdb;
+        
+        // Check if brief_intro column exists
+        $column_check = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} LIKE 'brief_intro'");
+        
+        if (empty($column_check)) {
+            // Add the new columns
+            $wpdb->query("ALTER TABLE {$this->table_name} 
+                         ADD COLUMN brief_intro TEXT AFTER custom_description,
+                         ADD COLUMN full_description LONGTEXT AFTER brief_intro");
+        }
     }
     
     /**
@@ -481,20 +516,34 @@ get_footer();
             return;
         }
         
-        // Check if Blocksy function exists
-        if (function_exists('blc_render_content_block')) {
+        // Get the content block post
+        $block = get_post($block_id);
+        if (!$block || $block->post_type !== 'ct_content_block') {
+            return;
+        }
+        
+        // Try Blocksy's native rendering first
+        if (function_exists('blocksy_render_content_block')) {
+            echo blocksy_render_content_block($block_id);
+        } elseif (function_exists('blc_render_content_block')) {
             echo blc_render_content_block($block_id);
-        } elseif (class_exists('Blocksy\ContentBlocksRenderer')) {
-            // Alternative method for newer Blocksy versions
-            $renderer = new \Blocksy\ContentBlocksRenderer();
-            echo $renderer->render_content_block($block_id);
         } else {
             // Fallback: render the content block manually
-            $block = get_post($block_id);
-            if ($block && $block->post_type === 'ct_content_block') {
-                // Apply content filters to handle shortcodes and blocks
-                echo apply_filters('the_content', $block->post_content);
+            // This ensures our shortcodes are processed
+            $content = $block->post_content;
+            
+            // Process Gutenberg blocks if present
+            if (has_blocks($content)) {
+                $content = do_blocks($content);
             }
+            
+            // Process shortcodes (including our tc_field shortcodes)
+            $content = do_shortcode($content);
+            
+            // Apply standard content filters
+            $content = apply_filters('the_content', $content);
+            
+            echo $content;
         }
     }
     
@@ -705,6 +754,12 @@ get_footer();
                 break;
             case 'description':
                 $output = isset($tc_data['custom_data']->custom_description) ? $tc_data['custom_data']->custom_description : '';
+                break;
+            case 'brief_intro':
+                $output = isset($tc_data['custom_data']->brief_intro) ? $tc_data['custom_data']->brief_intro : '';
+                break;
+            case 'full_description':
+                $output = isset($tc_data['custom_data']->full_description) ? $tc_data['custom_data']->full_description : '';
                 break;
             case 'content':
                 $output = isset($tc_data['custom_data']->custom_content) ? $tc_data['custom_data']->custom_content : '';
@@ -924,6 +979,155 @@ get_footer();
         }
         
         return $robots;
+    }
+    
+    /**
+     * Modify Archive Title for Theme Display
+     */
+    public function modify_archive_title($title, $term = null) {
+        if (!get_query_var('tc_combo')) {
+            return $title;
+        }
+        
+        global $wp_query;
+        if (isset($wp_query->tc_data['custom_data'])) {
+            $data = $wp_query->tc_data['custom_data'];
+            return $data->custom_title;
+        }
+        
+        return $title;
+    }
+    
+    /**
+     * Modify Archive Title Display (for get_the_archive_title)
+     */
+    public function modify_archive_title_display($title) {
+        if (!get_query_var('tc_combo')) {
+            return $title;
+        }
+        
+        global $wp_query;
+        if (isset($wp_query->tc_data['custom_data'])) {
+            $data = $wp_query->tc_data['custom_data'];
+            // Return just the title without any prefix
+            return $data->custom_title;
+        }
+        
+        return $title;
+    }
+    
+    /**
+     * Modify Document Title Parts
+     */
+    public function modify_document_title_parts($title_parts) {
+        if (!get_query_var('tc_combo')) {
+            return $title_parts;
+        }
+        
+        global $wp_query;
+        if (isset($wp_query->tc_data['custom_data'])) {
+            $data = $wp_query->tc_data['custom_data'];
+            $title_parts['title'] = $data->custom_title;
+        }
+        
+        return $title_parts;
+    }
+    
+    /**
+     * Modify Blocksy Hero Title
+     */
+    public function modify_blocksy_hero_title($title) {
+        if (!get_query_var('tc_combo')) {
+            return $title;
+        }
+        
+        global $wp_query;
+        if (isset($wp_query->tc_data['custom_data'])) {
+            $data = $wp_query->tc_data['custom_data'];
+            return $data->custom_title;
+        }
+        
+        return $title;
+    }
+    
+    /**
+     * Modify Blocksy Archive Card Layer
+     */
+    public function modify_blocksy_archive_card($output, $layer) {
+        if (!get_query_var('tc_combo')) {
+            return $output;
+        }
+        
+        // Check if this is the title layer
+        if (isset($layer['id']) && $layer['id'] === 'title') {
+            global $wp_query;
+            if (isset($wp_query->tc_data['custom_data'])) {
+                $data = $wp_query->tc_data['custom_data'];
+                $specialty = $wp_query->tc_data['specialty'];
+                
+                // Replace any instance of "Specialty [Name]" with our custom title
+                $pattern = '/Specialty\s+' . preg_quote($specialty->name, '/') . '/i';
+                $output = preg_replace($pattern, $data->custom_title, $output);
+                
+                // Also try to replace in the ct-title-label span specifically
+                $output = preg_replace(
+                    '/<span[^>]*class="[^"]*ct-title-label[^"]*"[^>]*>Specialty\s+' . preg_quote($specialty->name, '/') . '<\/span>/i',
+                    '<span class="ct-title-label">' . esc_html($data->custom_title) . '</span>',
+                    $output
+                );
+            }
+        }
+        
+        return $output;
+    }
+    
+    /**
+     * Start Output Buffer for Title Replacement
+     */
+    public function start_title_replacement_buffer() {
+        if (!get_query_var('tc_combo')) {
+            return;
+        }
+        
+        ob_start();
+    }
+    
+    /**
+     * End Output Buffer and Replace Titles
+     */
+    public function end_title_replacement_buffer() {
+        if (!get_query_var('tc_combo')) {
+            return;
+        }
+        
+        global $wp_query;
+        if (!isset($wp_query->tc_data['custom_data'])) {
+            return;
+        }
+        
+        $data = $wp_query->tc_data['custom_data'];
+        $specialty = $wp_query->tc_data['specialty'];
+        $location = $wp_query->tc_data['location'];
+        
+        $output = ob_get_clean();
+        
+        if ($output) {
+            // Replace "Specialty [Name]" pattern in ct-title-label spans
+            $pattern = '/<span([^>]*class="[^"]*ct-title-label[^"]*"[^>]*)>Specialty\s+' . preg_quote($specialty->name, '/') . '<\/span>/i';
+            $replacement = '<span$1>' . esc_html($data->custom_title) . '</span>';
+            $output = preg_replace($pattern, $replacement, $output);
+            
+            // Also replace in any h1 tags that might contain the wrong title
+            $pattern = '/<h1([^>]*)>Specialty\s+' . preg_quote($specialty->name, '/') . '<\/h1>/i';
+            $replacement = '<h1$1>' . esc_html($data->custom_title) . '</h1>';
+            $output = preg_replace($pattern, $replacement, $output);
+            
+            // Replace any remaining instances of "Specialty [Name]" pattern
+            $pattern = '/Specialty\s+' . preg_quote($specialty->name, '/') . '(?![^<]*>)/i';
+            $output = preg_replace($pattern, $data->custom_title, $output);
+            
+            echo $output;
+        }
     }
     
     /**
@@ -1358,12 +1562,30 @@ get_footer();
                             </td>
                         </tr>
                         <tr>
-                            <th><label for="custom_description">Short Description</label></th>
+                            <th><label for="custom_description">Short Description (Legacy)</label></th>
                             <td>
                                 <textarea id="custom_description" name="custom_description" rows="4" class="large-text">
                                     <?php echo esc_textarea($combo->custom_description); ?>
                                 </textarea>
-                                <p class="description">Brief description shown below the title.</p>
+                                <p class="description">Legacy field - use Brief Intro and Full Description instead.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="brief_intro">Brief Intro</label></th>
+                            <td>
+                                <textarea id="brief_intro" name="brief_intro" rows="3" class="large-text">
+                                    <?php echo esc_textarea($combo->brief_intro ?? ''); ?>
+                                </textarea>
+                                <p class="description">Short introduction shown above the main content. Use shortcode [tc_field field="brief_intro"] in Content Blocks.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="full_description">Full Description</label></th>
+                            <td>
+                                <textarea id="full_description" name="full_description" rows="6" class="large-text">
+                                    <?php echo esc_textarea($combo->full_description ?? ''); ?>
+                                </textarea>
+                                <p class="description">Detailed description shown below the main content. Use shortcode [tc_field field="full_description"] in Content Blocks.</p>
                             </td>
                         </tr>
                     </table>
@@ -1625,6 +1847,8 @@ get_footer();
             'custom_slug' => $custom_slug,
             'custom_title' => sanitize_text_field($data['custom_title']),
             'custom_description' => sanitize_textarea_field($data['custom_description']),
+            'brief_intro' => sanitize_textarea_field($data['brief_intro'] ?? ''),
+            'full_description' => wp_kses_post($data['full_description'] ?? ''),
             'meta_title' => sanitize_text_field($data['meta_title']),
             'meta_description' => sanitize_textarea_field($data['meta_description']),
             'custom_content' => wp_kses_post($data['custom_content']),
@@ -1639,7 +1863,7 @@ get_footer();
             $this->table_name,
             $update_data,
             array('id' => intval($data['combo_id'])),
-            array('%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d'),
+            array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d'),
             array('%d')
         );
         
@@ -2118,8 +2342,18 @@ get_footer();
                         </tr>
                         <tr>
                             <td><code>[tc_field field="description"]</code></td>
-                            <td>Display custom description</td>
+                            <td>Display custom description (legacy)</td>
                             <td>Custom description text...</td>
+                        </tr>
+                        <tr>
+                            <td><code>[tc_field field="brief_intro"]</code></td>
+                            <td>Display brief introduction</td>
+                            <td>Short intro text for above content...</td>
+                        </tr>
+                        <tr>
+                            <td><code>[tc_field field="full_description"]</code></td>
+                            <td>Display full description</td>
+                            <td>Detailed description for below content...</td>
                         </tr>
                         <tr>
                             <td><code>[tc_field field="url"]</code></td>
@@ -2580,6 +2814,14 @@ Body (JSON):
             'custom_description' => array(
                 'type' => 'string',
                 'sanitize_callback' => 'sanitize_textarea_field',
+            ),
+            'brief_intro' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_textarea_field',
+            ),
+            'full_description' => array(
+                'type' => 'string',
+                'sanitize_callback' => 'wp_kses_post',
             ),
             'custom_content' => array(
                 'type' => 'string',
