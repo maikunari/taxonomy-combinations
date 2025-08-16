@@ -54,12 +54,9 @@ class TaxonomyCombinationPages {
         add_action('template_redirect', array($this, 'setup_combination_as_archive'));
         add_filter('template_include', array($this, 'use_archive_template'), 99);
         
-        // Customize archive title and add content blocks
+        // Customize archive title
         add_filter('get_the_archive_title', array($this, 'customize_archive_title'));
         add_filter('the_archive_title', array($this, 'customize_archive_title'));
-        
-        // Add content blocks using WordPress actions that work with most themes
-        add_action('wp', array($this, 'setup_content_block_hooks'));
         
         // Activation hook
         register_activation_hook(__FILE__, array($this, 'activate_plugin'));
@@ -1146,8 +1143,9 @@ class TaxonomyCombinationPages {
             return $template;
         }
         
-        // Try to use the healthcare_provider archive template
+        // Use the tc_combination archive template
         $archive_template = locate_template(array(
+            'archive-tc_combination.php',
             'archive-healthcare_provider.php',
             'archive.php'
         ));

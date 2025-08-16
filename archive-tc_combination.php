@@ -1,63 +1,36 @@
 <?php
-/**
- * Archive template for Taxonomy Combination pages
- * 
- * Copy this to your theme directory (wp-content/themes/blocksy-child/)
- * This template makes combination pages display as archives with content blocks
- *
- * @package Blocksy
- */
-
 get_header();
-
-// Get the combination post data for text content
-global $post;
-$combination_post = $post;
-
-// Get ACF field content (or fallback to old meta if ACF not available)
-if (function_exists('get_field')) {
-    // Use ACF fields
-    $brief_intro = get_field('brief_intro', $combination_post->ID);
-    $full_description = get_field('full_description', $combination_post->ID);
-} else {
-    // Fallback to old meta fields
-    $brief_intro = get_post_meta($combination_post->ID, '_tc_brief_intro', true);
-    $full_description = get_post_meta($combination_post->ID, '_tc_full_description', true);
-}
 
 if (
 	! function_exists('elementor_theme_do_location')
 	||
 	! elementor_theme_do_location('archive')
 ) {
+	$prefix = blocksy_manager()->screen->get_prefix();
+	$container_class = 'ct-container';
+	
+	echo blocksy_output_hero_section(['type' => 'type-2']);
+	
+	$section_class = '';
+	if (! have_posts()) {
+		$section_class = 'class="ct-no-results"';
+	}
 	?>
-	<div class="tc-combination-archive">
-		<?php
-		// Display brief intro if set
-		if (!empty($brief_intro)) {
-			echo '<div class="tc-brief-intro ct-container">';
-			echo '<div class="ct-container">';
-			echo wpautop($brief_intro);
-			echo '</div>';
-			echo '</div>';
-		}
-		?>
+	<div class="<?php echo $container_class ?>" <?php echo wp_kses_post(blocksy_sidebar_position_attr()); ?> <?php echo blocksy_get_v_spacing() ?>>
+		<section <?php echo $section_class ?>>
+			<?php
+				echo blocksy_output_hero_section(['type' => 'type-1']);
+				echo blocksy_render_archive_cards();
+			?>
+		</section>
 		
-		<?php
-		// Use Blocksy's archive template part for the main content (provider listings)
-		get_template_part('template-parts/archive');
-		?>
+		<!-- Your custom content -->
+		<div class="tc-combination-custom-content">
+			<h1>Custom content after archive!</h1>
+			<?php echo do_shortcode('[ct_content_block id="4152"]'); ?>
+		</div>
 		
-		<?php
-		// Display full description if set
-		if (!empty($full_description)) {
-			echo '<div class="tc-full-description ct-container">';
-			echo '<div class="ct-container">';
-			echo wpautop($full_description);
-			echo '</div>';
-			echo '</div>';
-		}
-		?>
+		<?php get_sidebar(); ?>
 	</div>
 	<?php
 }

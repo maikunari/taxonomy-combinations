@@ -1,0 +1,67 @@
+{
+    "version": "6.0.0",
+    "groups": [
+        {
+            "key": "group_tc_descriptions",
+            "title": "Combination Descriptions",
+            "fields": [
+                {
+                    "key": "field_brief_intro",
+                    "label": "Brief Introduction",
+                    "name": "brief_intro",
+                    "type": "textarea",
+                    "instructions": "Brief introduction text that appears above the provider listings",
+                    "required": 0,
+                    "conditional_logic": 0,
+                    "wrapper": {
+                        "width": "",
+                        "class": "",
+                        "id": ""
+                    },
+                    "default_value": "",
+                    "placeholder": "Enter a brief introduction for this combination page...",
+                    "maxlength": "",
+                    "rows": 4,
+                    "new_lines": "wpautop"
+                },
+                {
+                    "key": "field_full_description",
+                    "label": "Full Description",
+                    "name": "full_description",
+                    "type": "wysiwyg",
+                    "instructions": "Full description that appears below the provider listings",
+                    "required": 0,
+                    "conditional_logic": 0,
+                    "wrapper": {
+                        "width": "",
+                        "class": "",
+                        "id": ""
+                    },
+                    "default_value": "",
+                    "tabs": "all",
+                    "toolbar": "full",
+                    "media_upload": 1,
+                    "delay": 0
+                }
+            ],
+            "location": [
+                [
+                    {
+                        "param": "post_type",
+                        "operator": "==",
+                        "value": "tc_combination"
+                    }
+                ]
+            ],
+            "menu_order": 0,
+            "position": "normal",
+            "style": "default",
+            "label_placement": "top",
+            "instruction_placement": "label",
+            "hide_on_screen": "",
+            "active": true,
+            "description": "Description fields for Taxonomy Combination pages",
+            "show_in_rest": 1
+        }
+    ]
+}
