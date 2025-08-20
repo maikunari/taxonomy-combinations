@@ -9,6 +9,8 @@ With the new Version 3.0 using real WordPress posts (Custom Post Type), the REST
 1. **WordPress 5.6+** (for Application Passwords)
 2. **Taxonomy Combinations Plugin v3.0+** installed and activated
 3. **CPT created** (either via CPT UI or the plugin will create it)
+4. **Advanced Custom Fields (ACF)** with REST API enabled for the field group
+5. **ACF to REST API plugin** (optional but recommended for easier ACF integration)
 
 ## 🔐 Authentication Methods
 
@@ -99,13 +101,13 @@ POST /wp-json/wp/v2/tc_combination
     "slug": "english-orthodontics-in-harajuku",
     "status": "publish",
     "content": "<p>Full HTML content here</p>",
+    "acf": {
+        "brief_intro": "Short introduction text",
+        "full_description": "Detailed description with HTML support"
+    },
     "meta": {
         "_tc_location_id": 5,
         "_tc_specialty_id": 12,
-        "_tc_brief_intro": "Short introduction text",
-        "_tc_full_description": "Detailed description",
-        "_tc_header_block_id": 3668,
-        "_tc_footer_block_id": 3670,
         "_tc_seo_title": "SEO Title Here",
         "_tc_seo_description": "SEO meta description"
     }
@@ -121,9 +123,9 @@ POST /wp-json/wp/v2/tc_combination/{id}
 ```json
 {
     "content": "<p>Updated content</p>",
-    "meta": {
-        "_tc_brief_intro": "Updated brief intro",
-        "_tc_full_description": "Updated full description"
+    "acf": {
+        "brief_intro": "Updated brief intro",
+        "full_description": "Updated full description"
     }
 }
 ```
@@ -212,9 +214,11 @@ combo = api.get_combination_by_slug('english-dentistry-in-shibuya')
 # Update with AI-generated content
 updates = {
     'content': '<p>Your AI-generated HTML content here...</p>',
+    'acf': {
+        'brief_intro': 'AI-generated brief introduction for above the listings',
+        'full_description': 'AI-generated detailed description for below the listings'
+    },
     'meta': {
-        '_tc_brief_intro': 'AI-generated brief introduction for above the listings',
-        '_tc_full_description': 'AI-generated detailed description for below the listings',
         '_tc_seo_title': 'English Dentists in Shibuya | Find English-Speaking Dental Care',
         '_tc_seo_description': 'AI-optimized meta description for search engines (max 160 chars)'
     }
@@ -280,9 +284,9 @@ const api = new TaxonomyCombinationAPI(
 // Update specific combination
 const updates = {
     content: '<p>Updated content from external app</p>',
-    meta: {
-        '_tc_brief_intro': 'New brief intro',
-        '_tc_full_description': 'New full description'
+    acf: {
+        'brief_intro': 'New brief intro',
+        'full_description': 'New full description'
     }
 };
 
@@ -290,19 +294,23 @@ api.updateCombination(123, updates)
     .then(result => console.log('Updated:', result));
 ```
 
-## 📝 Available Meta Fields
+## 📝 Available Fields
 
-All meta fields should be prefixed with underscore and passed in the `meta` object:
+### ACF Fields
+These fields are managed by Advanced Custom Fields and should be passed in the `acf` object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `brief_intro` | string | Short intro text (displays above provider listings) |
+| `full_description` | string/HTML | Full description (displays below provider listings) |
+
+### Meta Fields
+These fields should be prefixed with underscore and passed in the `meta` object:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `_tc_location_id` | integer | WordPress term ID for location |
 | `_tc_specialty_id` | integer | WordPress term ID for specialty |
-| `_tc_brief_intro` | string | Short intro text (displays above content) |
-| `_tc_full_description` | string | Full description (displays below content) |
-| `_tc_header_block_id` | integer | Blocksy content block ID for header |
-| `_tc_content_block_id` | integer | Blocksy content block ID for main content |
-| `_tc_footer_block_id` | integer | Blocksy content block ID for footer |
 | `_tc_seo_title` | string | SEO title tag (max 60 chars recommended) |
 | `_tc_seo_description` | string | SEO meta description (max 160 chars) |
 
@@ -317,12 +325,12 @@ const batchRequest = {
         {
             method: 'POST',
             path: '/wp/v2/tc_combination/123',
-            body: { meta: { '_tc_footer_block_id': 3670 } }
+            body: { acf: { 'brief_intro': 'Updated intro' } }
         },
         {
             method: 'POST',
             path: '/wp/v2/tc_combination/124',
-            body: { meta: { '_tc_footer_block_id': 3670 } }
+            body: { acf: { 'full_description': 'Updated description' } }
         }
     ]
 };

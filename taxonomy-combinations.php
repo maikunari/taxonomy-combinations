@@ -58,6 +58,9 @@ class TaxonomyCombinationPages {
         add_filter('get_the_archive_title', array($this, 'customize_archive_title'));
         add_filter('the_archive_title', array($this, 'customize_archive_title'));
         
+        // Setup hooks for archive content
+        add_action('wp', array($this, 'setup_archive_content_hooks'));
+        
         // Activation hook
         register_activation_hook(__FILE__, array($this, 'activate_plugin'));
     }
@@ -1176,6 +1179,79 @@ class TaxonomyCombinationPages {
             return $this->combination_post->post_title;
         }
         return $title;
+    }
+    
+    /**
+     * Setup hooks for archive content
+     */
+    public function setup_archive_content_hooks() {
+        if (!is_singular($this->cpt_slug)) {
+            return;
+        }
+        
+        // Hook before the posts loop
+        add_action('blocksy:loop:before', array($this, 'output_brief_intro'));
+        
+        // Hook after the posts loop  
+        add_action('blocksy:loop:after', array($this, 'output_full_description'));
+    }
+    
+    /**
+     * Output the brief intro using ACF fields
+     */
+    public function output_brief_intro() {
+        global $post;
+        
+        // Get the original combination post (not the providers in the loop)
+        $combination_post = $this->combination_post ?: $post;
+        
+        if ($combination_post && $combination_post->post_type === $this->cpt_slug) {
+            // Try ACF field first
+            $brief_intro = '';
+            if (function_exists('get_field')) {
+                $brief_intro = get_field('brief_intro', $combination_post->ID);
+            }
+            
+            // Fallback to meta field if ACF not available
+            if (empty($brief_intro)) {
+                $brief_intro = get_post_meta($combination_post->ID, '_tc_brief_intro', true);
+            }
+            
+            if (!empty($brief_intro)) {
+                echo '<div class="tc-brief-intro entry-content">';
+                echo wp_kses_post(wpautop($brief_intro));
+                echo '</div>';
+            }
+        }
+    }
+    
+    /**
+     * Output the full description using ACF fields
+     */
+    public function output_full_description() {
+        global $post;
+        
+        // Get the original combination post
+        $combination_post = $this->combination_post ?: $post;
+        
+        if ($combination_post && $combination_post->post_type === $this->cpt_slug) {
+            // Try ACF field first
+            $full_description = '';
+            if (function_exists('get_field')) {
+                $full_description = get_field('full_description', $combination_post->ID);
+            }
+            
+            // Fallback to meta field if ACF not available
+            if (empty($full_description)) {
+                $full_description = get_post_meta($combination_post->ID, '_tc_full_description', true);
+            }
+            
+            if (!empty($full_description)) {
+                echo '<div class="tc-full-description entry-content">';
+                echo wp_kses_post(wpautop($full_description));
+                echo '</div>';
+            }
+        }
     }
     
     /**
